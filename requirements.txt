@@ -1,0 +1,8 @@
+streamlit
+pandas
+plotly
+openai
+transformers
+torch
+bitsandbytes
+huggingface_hub
