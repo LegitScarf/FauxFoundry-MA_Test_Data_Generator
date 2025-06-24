@@ -211,7 +211,7 @@ def init_session_state():
             'failed_generations': 0
         }
 
-# Test OpenAI connection
+# Enhanced test OpenAI connection with better error handling
 def test_openai_connection():
     if not st.session_state.openai_client:
         return False, "No OpenAI client configured"
@@ -220,18 +220,33 @@ def test_openai_connection():
         # Test with a simple completion
         response = st.session_state.openai_client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": "Test"}],
+            messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5,
-            timeout=10
+            timeout=30
         )
         return True, "Connection successful"
     except Exception as e:
-        return False, f"Connection failed: {str(e)}"
+        error_msg = str(e)
+        if "api_key" in error_msg.lower():
+            return False, "Invalid API key"
+        elif "quota" in error_msg.lower() or "billing" in error_msg.lower():
+            return False, "API quota exceeded or billing issue"
+        elif "timeout" in error_msg.lower():
+            return False, "Connection timeout"
+        elif "rate" in error_msg.lower():
+            return False, "Rate limit exceeded"
+        else:
+            return False, f"Connection failed: {error_msg}"
 
-# Enhanced attribute designer with retry logic
+# Fixed attribute designer with better error handling and connection management
 def attribute_designer_stream(user_prompt, progress_placeholder, max_retries=3):
     for attempt in range(max_retries):
         try:
+            # Check if client exists before attempting
+            if not st.session_state.openai_client:
+                st.markdown('<div class="error-content">❌ OpenAI client not initialized</div>', unsafe_allow_html=True)
+                return None
+            
             with progress_placeholder.container():
                 st.markdown('<div class="progress-container">', unsafe_allow_html=True)
                 st.markdown(f'<div class="step-header">🧠 Step 1: Designing Attribute Structure (Attempt {attempt + 1}/{max_retries})</div>', unsafe_allow_html=True)
@@ -273,16 +288,31 @@ JSON:"""
                     {"role": "user", "content": prompt}
                 ]
                 
-                response = st.session_state.openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    stream=False,
-                    temperature=0.2,
-                    max_tokens=300,
-                    timeout=30
-                )
-                
-                attributes = response.choices[0].message.content.strip()
+                # Make API call with enhanced error handling
+                try:
+                    response = st.session_state.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages,
+                        stream=False,
+                        temperature=0.2,
+                        max_tokens=300,
+                        timeout=60  # Increased timeout
+                    )
+                    
+                    attributes = response.choices[0].message.content.strip()
+                    
+                except Exception as api_error:
+                    error_msg = str(api_error)
+                    if "timeout" in error_msg.lower():
+                        raise Exception("API request timed out - check your internet connection")
+                    elif "rate" in error_msg.lower():
+                        raise Exception("Rate limit exceeded - wait before retrying")
+                    elif "quota" in error_msg.lower() or "billing" in error_msg.lower():
+                        raise Exception("API quota exceeded or billing issue")
+                    elif "api_key" in error_msg.lower():
+                        raise Exception("Invalid API key")
+                    else:
+                        raise Exception(f"API error: {error_msg}")
                 
                 # Clean up the response to ensure it's valid JSON
                 attributes = attributes.replace('```json', '').replace('```', '').strip()
@@ -309,9 +339,9 @@ JSON:"""
                     
                 except json.JSONDecodeError as e:
                     if attempt < max_retries - 1:
-                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON. Retrying...</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON format. Retrying...</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                     else:
                         st.markdown(f'<div class="error-content">JSON Parse Error: {str(e)}</div>', unsafe_allow_html=True)
@@ -321,9 +351,9 @@ JSON:"""
         except Exception as e:
             error_msg = str(e)
             if attempt < max_retries - 1:
-                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying...</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in 3 seconds...</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-                time.sleep(2)
+                time.sleep(3)  # Longer delay between retries
                 continue
             else:
                 st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
@@ -332,7 +362,7 @@ JSON:"""
     
     return None
 
-# Enhanced dataset generator with streaming and retry logic
+# Enhanced dataset generator with better connection handling
 def dataset_generator_stream(attributes, progress_placeholder, num_rows=10, max_retries=3):
     for attempt in range(max_retries):
         try:
@@ -395,16 +425,29 @@ Example format:
                         status_text.text("Finalizing dataset...")
                     time.sleep(0.02)
                 
-                response = st.session_state.openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    stream=False,
-                    temperature=0.7,
-                    max_tokens=2000,
-                    timeout=45
-                )
-                
-                dataset = response.choices[0].message.content.strip()
+                # Make API call with better error handling
+                try:
+                    response = st.session_state.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages,
+                        stream=False,
+                        temperature=0.7,
+                        max_tokens=2000,
+                        timeout=60  # Increased timeout
+                    )
+                    
+                    dataset = response.choices[0].message.content.strip()
+                    
+                except Exception as api_error:
+                    error_msg = str(api_error)
+                    if "timeout" in error_msg.lower():
+                        raise Exception("API request timed out")
+                    elif "rate" in error_msg.lower():
+                        raise Exception("Rate limit exceeded")
+                    elif "quota" in error_msg.lower():
+                        raise Exception("API quota exceeded")
+                    else:
+                        raise Exception(f"API error: {error_msg}")
                 
                 # Clean up the dataset
                 dataset = dataset.replace('```markdown', '').replace('```', '').strip()
@@ -418,7 +461,7 @@ Example format:
                     if attempt < max_retries - 1:
                         st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid table format. Retrying...</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                     else:
                         st.markdown(f'<div class="error-content">Failed to generate valid table format</div>', unsafe_allow_html=True)
@@ -428,9 +471,9 @@ Example format:
         except Exception as e:
             error_msg = str(e)
             if attempt < max_retries - 1:
-                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying...</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in 3 seconds...</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-                time.sleep(2)
+                time.sleep(3)
                 continue
             else:
                 st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
@@ -582,7 +625,7 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">FAUXFOUNDRY</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Advanced Synthetic Dataset Generation Platform v2.0</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Advanced Synthetic Dataset Generation Platform v2.1 - Fixed</p>', unsafe_allow_html=True)
     
     # API Configuration in sidebar
     with st.sidebar:
@@ -596,6 +639,20 @@ def main():
                     st.success(f"✅ {message}")
                 else:
                     st.error(f"❌ {message}")
+                    # Show troubleshooting tips
+                    st.markdown("**Troubleshooting:**")
+                    if "api_key" in message.lower():
+                        st.write("• Check if your API key is valid")
+                        st.write("• Ensure it starts with 'sk-'")
+                    elif "quota" in message.lower():
+                        st.write("• Check your OpenAI billing/usage")
+                        st.write("• Verify your account has credits")
+                    elif "timeout" in message.lower():
+                        st.write("• Check your internet connection")
+                        st.write("• Try again in a few moments")
+                    elif "rate" in message.lower():
+                        st.write("• Wait before making another request")
+                        st.write("• Consider upgrading your plan")
             else:
                 st.error("❌ No OpenAI client configured")
         
@@ -612,16 +669,19 @@ def main():
             # Allow manual override if secrets don't work
             openai_key = st.text_input("OpenAI API Key", 
                                      type="password", 
-                                     help="Enter your OpenAI API key")
+                                     help="Enter your OpenAI API key (starts with sk-)")
             
             if openai_key:
-                try:
-                    st.session_state.openai_client = OpenAI(api_key=openai_key)
-                    st.session_state.api_key_source = "manual"
-                    st.success("✅ OpenAI client initialized")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Invalid API key: {str(e)}")
+                if not openai_key.startswith('sk-'):
+                    st.error("❌ Invalid API key format. Should start with 'sk-'")
+                else:
+                    try:
+                        st.session_state.openai_client = OpenAI(api_key=openai_key)
+                        st.session_state.api_key_source = "manual"
+                        st.success("✅ OpenAI client initialized")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Invalid API key: {str(e)}")
         
         st.markdown("---")
         st.markdown("### 📊 Generation Options")
