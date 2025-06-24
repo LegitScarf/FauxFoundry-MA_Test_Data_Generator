@@ -254,162 +254,204 @@ def attribute_designer_stream(user_prompt, progress_placeholder, max_retries=3):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Simulate progress
-                for i in range(100):
-                    progress_bar.progress(i + 1)
-                    if i < 30:
+                # Simulate progress with shorter intervals to avoid blocking
+                for i in range(50):  # Reduced from 100 to 50
+                    progress_bar.progress((i + 1) * 2)
+                    if i < 15:
                         status_text.text("Analyzing data requirements...")
-                    elif i < 60:
+                    elif i < 30:
                         status_text.text("Identifying column types...")
-                    elif i < 90:
+                    elif i < 45:
                         status_text.text("Generating attribute schema...")
                     else:
                         status_text.text("Finalizing structure...")
-                    time.sleep(0.01)
+                    time.sleep(0.005)  # Reduced sleep time
                 
-                # Enhanced prompt for better JSON generation
-                prompt = f"""You are a data schema designer. Create a JSON object defining the structure for a synthetic dataset.
+                # Simplified prompt for better reliability
+                prompt = f"""Create a JSON schema for: {user_prompt}
 
-REQUIREMENTS:
-- Return ONLY valid JSON, no markdown, no explanations
-- Use these data types only: "String", "Integer", "Float", "Boolean", "Date"
-- Create 3-8 relevant fields based on the request
-- Field names should be descriptive and use snake_case
+Return only valid JSON format:
+{{"field_name": "data_type"}}
 
-USER REQUEST: {user_prompt}
-
-Example format:
-{{"field_name": "String", "age": "Integer", "salary": "Float", "is_active": "Boolean", "hire_date": "Date"}}
+Use only these data types: String, Integer, Float, Boolean, Date
+Create 3-6 relevant fields.
 
 JSON:"""
                 
                 messages = [
-                    {"role": "system", "content": "You are a data schema generator. Return only valid JSON with field names and data types. No additional text or formatting."},
                     {"role": "user", "content": prompt}
                 ]
                 
-                # Make API call with enhanced error handling and exponential backoff
-                try:
-                    # Add exponential backoff delay
-                    if attempt > 0:
-                        delay = 2 ** attempt  # 2, 4, 8 seconds
-                        time.sleep(delay)
-                    
-                    response = st.session_state.openai_client.chat.completions.create(
-                        model="gpt-3.5-turbo",  # Changed from gpt-4o-mini to more stable model
-                        messages=messages,
-                        stream=False,
-                        temperature=0.2,
-                        max_tokens=300,
-                        timeout=30,  # Reduced timeout
-                        request_timeout=30  # Added explicit request timeout
-                    )
-                    
-                    if not response or not response.choices:
-                        raise Exception("Empty response from OpenAI API")
-                    
-                    attributes = response.choices[0].message.content.strip()
-                    
-                    if not attributes:
-                        raise Exception("Empty content in API response")
-                    
-                except Exception as api_error:
-                    error_msg = str(api_error).lower()
-                    
-                    if "connection" in error_msg or "network" in error_msg:
-                        raise Exception("Network connection issue - check internet connectivity")
-                    elif "timeout" in error_msg:
-                        raise Exception("Request timed out - try again or check connection")
-                    elif "rate" in error_msg or "rate limit" in error_msg:
-                        raise Exception("Rate limit exceeded - wait before retrying")
-                    elif "quota" in error_msg or "billing" in error_msg:
-                        raise Exception("API quota exceeded or billing issue")
-                    elif "api_key" in error_msg or "authentication" in error_msg:
-                        raise Exception("Invalid API key or authentication failed")
-                    elif "model" in error_msg:
-                        raise Exception("Model not available - trying alternative")
-                    else:
-                        raise Exception(f"API error: {str(api_error)}")
+                # Try multiple approaches with different timeouts
+                response = None
                 
-                # Clean up the response to ensure it's valid JSON
+                # Approach 1: Very short timeout for quick test
+                try:
+                    status_text.text("Testing connection...")
+                    response = st.session_state.openai_client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=5,
+                        timeout=5  # Very short timeout for connection test
+                    )
+                    status_text.text("Connection OK, generating schema...")
+                except Exception as test_error:
+                    if "timeout" in str(test_error).lower():
+                        raise Exception("Connection test failed - network timeout")
+                    elif "api_key" in str(test_error).lower():
+                        raise Exception("API key authentication failed")
+                    else:
+                        raise Exception(f"Connection test failed: {str(test_error)}")
+                
+                # Approach 2: Main request with progressive timeout
+                timeouts = [10, 15, 20]  # Progressive timeouts
+                
+                for timeout_val in timeouts:
+                    try:
+                        status_text.text(f"Generating schema (timeout: {timeout_val}s)...")
+                        
+                        response = st.session_state.openai_client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=messages,
+                            stream=False,
+                            temperature=0.1,  # Lower temperature for more consistent output
+                            max_tokens=200,   # Reduced token limit
+                            timeout=timeout_val
+                        )
+                        
+                        if response and response.choices and response.choices[0].message.content:
+                            break
+                        else:
+                            raise Exception("Empty response from API")
+                            
+                    except Exception as timeout_error:
+                        if timeout_val == timeouts[-1]:  # Last timeout attempt
+                            raise timeout_error
+                        else:
+                            status_text.text(f"Timeout at {timeout_val}s, trying {timeouts[timeouts.index(timeout_val)+1]}s...")
+                            time.sleep(1)
+                            continue
+                
+                if not response or not response.choices:
+                    raise Exception("No valid response received after all timeout attempts")
+                
+                attributes = response.choices[0].message.content.strip()
+                
+                if not attributes:
+                    raise Exception("Empty content in API response")
+                
+                # Clean and validate JSON with better error handling
+                status_text.text("Validating response...")
+                
+                # Remove common markdown formatting
                 attributes = attributes.replace('```json', '').replace('```', '').strip()
                 
-                # Find JSON boundaries
+                # Find JSON boundaries more reliably
                 json_start = attributes.find('{')
                 json_end = attributes.rfind('}')
                 
-                if json_start != -1 and json_end != -1 and json_end > json_start:
+                if json_start == -1 or json_end == -1 or json_end <= json_start:
+                    # Try to create a simple fallback JSON based on prompt
+                    fallback_json = {
+                        "id": "Integer",
+                        "name": "String",
+                        "created_date": "Date"
+                    }
+                    attributes = json.dumps(fallback_json)
+                    st.markdown('<div class="step-content">⚠️ Using fallback schema due to parsing issues</div>', unsafe_allow_html=True)
+                else:
                     attributes = attributes[json_start:json_end + 1]
                 
-                # Validate JSON
+                # Validate and parse JSON
                 try:
                     parsed_json = json.loads(attributes)
+                    
                     if not isinstance(parsed_json, dict) or len(parsed_json) == 0:
-                        raise ValueError("Invalid JSON structure - not a valid dictionary")
+                        raise ValueError("Invalid JSON structure")
                     
-                    # Additional validation for data types
+                    # Ensure we have valid data types
                     valid_types = ["String", "Integer", "Float", "Boolean", "Date"]
-                    for key, value in parsed_json.items():
-                        if value not in valid_types:
-                            st.warning(f"Warning: '{value}' is not a standard data type for field '{key}'")
+                    cleaned_json = {}
                     
-                    st.markdown(f'<div class="step-content">{json.dumps(parsed_json, indent=2)}</div>', unsafe_allow_html=True)
+                    for key, value in parsed_json.items():
+                        if value in valid_types:
+                            cleaned_json[key] = value
+                        else:
+                            # Map common variations to valid types
+                            value_lower = str(value).lower()
+                            if 'string' in value_lower or 'text' in value_lower:
+                                cleaned_json[key] = "String"
+                            elif 'int' in value_lower or 'number' in value_lower:
+                                cleaned_json[key] = "Integer"
+                            elif 'float' in value_lower or 'decimal' in value_lower:
+                                cleaned_json[key] = "Float"
+                            elif 'bool' in value_lower:
+                                cleaned_json[key] = "Boolean"
+                            elif 'date' in value_lower or 'time' in value_lower:
+                                cleaned_json[key] = "Date"
+                            else:
+                                cleaned_json[key] = "String"  # Default fallback
+                    
+                    if not cleaned_json:
+                        raise ValueError("No valid fields in schema")
+                    
+                    # Update attributes with cleaned JSON
+                    attributes = json.dumps(cleaned_json)
+                    
+                    st.markdown(f'<div class="step-content">✅ Schema generated successfully</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="step-content">{json.dumps(cleaned_json, indent=2)}</div>', unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
                     return attributes
                     
                 except json.JSONDecodeError as e:
                     if attempt < max_retries - 1:
-                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON format - {str(e)}. Retrying...</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="error-content">JSON parsing failed on attempt {attempt + 1}: {str(e)}. Retrying...</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
+                        time.sleep(2)
                         continue
                     else:
-                        st.markdown(f'<div class="error-content">JSON Parse Error: {str(e)}. Raw response: {attributes[:200]}...</div>', unsafe_allow_html=True)
+                        # Final fallback - create a basic schema
+                        fallback_schema = {
+                            "id": "Integer",
+                            "name": "String", 
+                            "value": "Float",
+                            "active": "Boolean",
+                            "created_date": "Date"
+                        }
+                        st.markdown('<div class="error-content">⚠️ Using emergency fallback schema</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="step-content">{json.dumps(fallback_schema, indent=2)}</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
-                        return None
+                        return json.dumps(fallback_schema)
                         
         except Exception as e:
             error_msg = str(e)
             
-            # Handle specific model errors by trying alternative
-            if "model" in error_msg.lower() and attempt == 0:
-                st.markdown(f'<div class="error-content">Model issue detected, trying alternative model...</div>', unsafe_allow_html=True)
-                # Try with gpt-3.5-turbo-instruct as fallback
-                try:
-                    response = st.session_state.openai_client.completions.create(
-                        model="gpt-3.5-turbo-instruct",
-                        prompt=f"Generate a JSON schema for: {user_prompt}\n\nReturn only valid JSON with field names and data types like: {{\"name\": \"String\", \"age\": \"Integer\"}}",
-                        max_tokens=300,
-                        temperature=0.2,
-                        timeout=30
-                    )
-                    
-                    if response and response.choices:
-                        attributes = response.choices[0].text.strip()
-                        # Process the response similar to above
-                        attributes = attributes.replace('```json', '').replace('```', '').strip()
-                        json_start = attributes.find('{')
-                        json_end = attributes.rfind('}')
-                        
-                        if json_start != -1 and json_end != -1:
-                            attributes = attributes[json_start:json_end + 1]
-                            try:
-                                parsed_json = json.loads(attributes)
-                                st.markdown(f'<div class="step-content">{json.dumps(parsed_json, indent=2)}</div>', unsafe_allow_html=True)
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                return attributes
-                            except:
-                                pass
-                except:
-                    pass
+            # Progressive delay between attempts
+            delay = min(2 ** attempt, 8)  # Cap at 8 seconds
             
             if attempt < max_retries - 1:
-                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in {2**(attempt+1)} seconds...</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in {delay} seconds...</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
+                time.sleep(delay)
                 continue
             else:
-                st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
+                # Final attempt failed - provide emergency fallback
+                st.markdown(f'<div class="error-content">All attempts failed: {error_msg}</div>', unsafe_allow_html=True)
+                st.markdown('<div class="error-content">🚨 Using emergency schema to continue</div>', unsafe_allow_html=True)
+                
+                # Create emergency schema based on common patterns
+                emergency_schema = {
+                    "record_id": "Integer",
+                    "name": "String",
+                    "description": "String", 
+                    "amount": "Float",
+                    "is_active": "Boolean",
+                    "timestamp": "Date"
+                }
+                
+                st.markdown(f'<div class="step-content">{json.dumps(emergency_schema, indent=2)}</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-                return None
+                return json.dumps(emergency_schema)
     
     return None
 
