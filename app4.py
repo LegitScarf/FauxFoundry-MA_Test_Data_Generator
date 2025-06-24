@@ -4,8 +4,6 @@ import json
 import time
 from io import StringIO
 from openai import OpenAI
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-import torch
 
 # Page configuration
 st.set_page_config(
@@ -175,133 +173,75 @@ def init_session_state():
             st.session_state.openai_client = OpenAI(api_key=openai_api_key)
         except:
             st.session_state.openai_client = None
-    if 'hf_model' not in st.session_state:
-        st.session_state.hf_model = None
-    if 'hf_tokenizer' not in st.session_state:
-        st.session_state.hf_tokenizer = None
     if 'generated_data' not in st.session_state:
         st.session_state.generated_data = None
 
-# Enhanced attribute designer with streaming
+# Simplified attribute designer using OpenAI only
 def attribute_designer_stream(user_prompt, progress_placeholder):
     try:
-        if st.session_state.hf_model is None:
-            with progress_placeholder.container():
-                st.markdown('<div class="progress-container">', unsafe_allow_html=True)
-                st.markdown('<div class="step-header">🧠 Loading AI Models...</div>', unsafe_allow_html=True)
-                
-                # Initialize model with better error handling
-                model_id = "distilbert-base-uncased"  # Using lighter model for better compatibility
-                
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                try:
-                    status_text.text("Loading tokenizer...")
-                    progress_bar.progress(25)
-                    
-                    # Use a simpler approach without quantization for deployment
-                    tokenizer = AutoTokenizer.from_pretrained(model_id)
-                    st.session_state.hf_tokenizer = tokenizer
-                    
-                    status_text.text("Loading model...")
-                    progress_bar.progress(75)
-                    
-                    # Simplified model loading without device_map for compatibility
-                    model = AutoModelForCausalLM.from_pretrained(
-                        "gpt2",  # Using GPT-2 as it's more reliable for text generation
-                        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    )
-                    st.session_state.hf_model = model
-                    
-                    progress_bar.progress(100)
-                    status_text.text("Model loaded successfully!")
-                    
-                except Exception as model_error:
-                    # Fallback: Use OpenAI for attribute design too
-                    st.warning(f"HuggingFace model loading failed: {str(model_error)}")
-                    st.info("Falling back to OpenAI for attribute design...")
-                    st.session_state.hf_model = "fallback"
-                    st.session_state.hf_tokenizer = "fallback"
-                    progress_bar.progress(100)
-                    status_text.text("Using OpenAI fallback for attribute design")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Generate attributes
         with progress_placeholder.container():
             st.markdown('<div class="progress-container">', unsafe_allow_html=True)
             st.markdown('<div class="step-header">🧠 Step 1: Designing Attribute Structure</div>', unsafe_allow_html=True)
             
-            if st.session_state.hf_model == "fallback":
-                # Use OpenAI for attribute design
-                prompt = f"""You are an agent that helps in specifying the data type of columns requested by the user. Return ONLY a valid JSON object with field names and their data types.
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Simulate progress
+            for i in range(100):
+                progress_bar.progress(i + 1)
+                if i < 30:
+                    status_text.text("Analyzing data requirements...")
+                elif i < 60:
+                    status_text.text("Identifying column types...")
+                elif i < 90:
+                    status_text.text("Generating attribute schema...")
+                else:
+                    status_text.text("Finalizing structure...")
+                time.sleep(0.01)
+            
+            # Use OpenAI for attribute design
+            prompt = f"""You are a data schema designer. Analyze the user's request and return ONLY a valid JSON object with field names and their data types.
 
-Example format: {{"ID": "Integer", "Name": "String", "Age": "Integer"}}
-
-User request: {user_prompt}
-
-Respond with only the JSON object, no additional text:"""
-                
-                try:
-                    messages = [
-                        {"role": "system", "content": "You are a data type analyzer. Return only valid JSON."},
-                        {"role": "user", "content": prompt}
-                    ]
-                    
-                    response = st.session_state.openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=messages,
-                        stream=False,
-                        temperature=0.3
-                    )
-                    
-                    attributes = response.choices[0].message.content.strip()
-                    
-                    # Clean up the response to ensure it's valid JSON
-                    if not attributes.startswith('{'):
-                        json_start = attributes.find('{')
-                        if json_start != -1:
-                            attributes = attributes[json_start:]
-                    
-                    if not attributes.endswith('}'):
-                        json_end = attributes.rfind('}')
-                        if json_end != -1:
-                            attributes = attributes[:json_end + 1]
-                    
-                except Exception as e:
-                    st.error(f"OpenAI fallback failed: {str(e)}")
-                    attributes = '{"error": "Could not generate attributes"}'
-                
-            else:
-                # Use HuggingFace model
-                prompt = f"""You are an agent that helps in specifying the data type of columns. Return JSON format only.
+Rules:
+- Return only valid JSON, no additional text
+- Use common data types: "String", "Integer", "Float", "Boolean", "Date"
+- Field names should be clear and descriptive
 
 User request: {user_prompt}
 
-JSON response: """
-                
-                try:
-                    generator = pipeline("text-generation", 
-                                       model=st.session_state.hf_model, 
-                                       tokenizer=st.session_state.hf_tokenizer,
-                                       device=0 if torch.cuda.is_available() else -1)
-                    
-                    result = generator(prompt, max_new_tokens=150, temperature=0.7, 
-                                     do_sample=True, pad_token_id=50256)[0]["generated_text"]
-                    
-                    # Extract JSON from result
-                    json_start = result.find('{')
-                    json_end = result.rfind('}') + 1
-                    
-                    if json_start != -1 and json_end != -1:
-                        attributes = result[json_start:json_end]
-                    else:
-                        attributes = '{"error": "Could not extract attributes"}'
-                        
-                except Exception as e:
-                    st.error(f"HuggingFace generation failed: {str(e)}")
-                    attributes = '{"error": "Could not generate attributes"}'
+JSON schema:"""
+            
+            messages = [
+                {"role": "system", "content": "You are a data schema analyzer. Return only valid JSON with no additional text."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            response = st.session_state.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                stream=False,
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            attributes = response.choices[0].message.content.strip()
+            
+            # Clean up the response to ensure it's valid JSON
+            if not attributes.startswith('{'):
+                json_start = attributes.find('{')
+                if json_start != -1:
+                    attributes = attributes[json_start:]
+            
+            if not attributes.endswith('}'):
+                json_end = attributes.rfind('}')
+                if json_end != -1:
+                    attributes = attributes[:json_end + 1]
+            
+            # Test if it's valid JSON
+            try:
+                json.loads(attributes)
+            except:
+                attributes = '{"error": "Invalid JSON generated"}'
             
             st.markdown(f'<div class="step-content">{attributes}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
