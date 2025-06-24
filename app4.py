@@ -288,50 +288,70 @@ JSON:"""
                     {"role": "user", "content": prompt}
                 ]
                 
-                # Make API call with enhanced error handling
+                # Make API call with enhanced error handling and exponential backoff
                 try:
+                    # Add exponential backoff delay
+                    if attempt > 0:
+                        delay = 2 ** attempt  # 2, 4, 8 seconds
+                        time.sleep(delay)
+                    
                     response = st.session_state.openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model="gpt-3.5-turbo",  # Changed from gpt-4o-mini to more stable model
                         messages=messages,
                         stream=False,
                         temperature=0.2,
                         max_tokens=300,
-                        timeout=60  # Increased timeout
+                        timeout=30,  # Reduced timeout
+                        request_timeout=30  # Added explicit request timeout
                     )
+                    
+                    if not response or not response.choices:
+                        raise Exception("Empty response from OpenAI API")
                     
                     attributes = response.choices[0].message.content.strip()
                     
+                    if not attributes:
+                        raise Exception("Empty content in API response")
+                    
                 except Exception as api_error:
-                    error_msg = str(api_error)
-                    if "timeout" in error_msg.lower():
-                        raise Exception("API request timed out - check your internet connection")
-                    elif "rate" in error_msg.lower():
+                    error_msg = str(api_error).lower()
+                    
+                    if "connection" in error_msg or "network" in error_msg:
+                        raise Exception("Network connection issue - check internet connectivity")
+                    elif "timeout" in error_msg:
+                        raise Exception("Request timed out - try again or check connection")
+                    elif "rate" in error_msg or "rate limit" in error_msg:
                         raise Exception("Rate limit exceeded - wait before retrying")
-                    elif "quota" in error_msg.lower() or "billing" in error_msg.lower():
+                    elif "quota" in error_msg or "billing" in error_msg:
                         raise Exception("API quota exceeded or billing issue")
-                    elif "api_key" in error_msg.lower():
-                        raise Exception("Invalid API key")
+                    elif "api_key" in error_msg or "authentication" in error_msg:
+                        raise Exception("Invalid API key or authentication failed")
+                    elif "model" in error_msg:
+                        raise Exception("Model not available - trying alternative")
                     else:
-                        raise Exception(f"API error: {error_msg}")
+                        raise Exception(f"API error: {str(api_error)}")
                 
                 # Clean up the response to ensure it's valid JSON
                 attributes = attributes.replace('```json', '').replace('```', '').strip()
                 
-                if not attributes.startswith('{'):
-                    json_start = attributes.find('{')
-                    if json_start != -1:
-                        attributes = attributes[json_start:]
+                # Find JSON boundaries
+                json_start = attributes.find('{')
+                json_end = attributes.rfind('}')
                 
-                if not attributes.endswith('}'):
-                    json_end = attributes.rfind('}')
-                    if json_end != -1:
-                        attributes = attributes[:json_end + 1]
+                if json_start != -1 and json_end != -1 and json_end > json_start:
+                    attributes = attributes[json_start:json_end + 1]
                 
                 # Validate JSON
                 try:
                     parsed_json = json.loads(attributes)
                     if not isinstance(parsed_json, dict) or len(parsed_json) == 0:
-                        raise ValueError("Invalid JSON structure")
+                        raise ValueError("Invalid JSON structure - not a valid dictionary")
+                    
+                    # Additional validation for data types
+                    valid_types = ["String", "Integer", "Float", "Boolean", "Date"]
+                    for key, value in parsed_json.items():
+                        if value not in valid_types:
+                            st.warning(f"Warning: '{value}' is not a standard data type for field '{key}'")
                     
                     st.markdown(f'<div class="step-content">{json.dumps(parsed_json, indent=2)}</div>', unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
@@ -339,21 +359,52 @@ JSON:"""
                     
                 except json.JSONDecodeError as e:
                     if attempt < max_retries - 1:
-                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON format. Retrying...</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON format - {str(e)}. Retrying...</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
-                        time.sleep(2)
                         continue
                     else:
-                        st.markdown(f'<div class="error-content">JSON Parse Error: {str(e)}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="error-content">JSON Parse Error: {str(e)}. Raw response: {attributes[:200]}...</div>', unsafe_allow_html=True)
                         st.markdown('</div>', unsafe_allow_html=True)
                         return None
                         
         except Exception as e:
             error_msg = str(e)
+            
+            # Handle specific model errors by trying alternative
+            if "model" in error_msg.lower() and attempt == 0:
+                st.markdown(f'<div class="error-content">Model issue detected, trying alternative model...</div>', unsafe_allow_html=True)
+                # Try with gpt-3.5-turbo-instruct as fallback
+                try:
+                    response = st.session_state.openai_client.completions.create(
+                        model="gpt-3.5-turbo-instruct",
+                        prompt=f"Generate a JSON schema for: {user_prompt}\n\nReturn only valid JSON with field names and data types like: {{\"name\": \"String\", \"age\": \"Integer\"}}",
+                        max_tokens=300,
+                        temperature=0.2,
+                        timeout=30
+                    )
+                    
+                    if response and response.choices:
+                        attributes = response.choices[0].text.strip()
+                        # Process the response similar to above
+                        attributes = attributes.replace('```json', '').replace('```', '').strip()
+                        json_start = attributes.find('{')
+                        json_end = attributes.rfind('}')
+                        
+                        if json_start != -1 and json_end != -1:
+                            attributes = attributes[json_start:json_end + 1]
+                            try:
+                                parsed_json = json.loads(attributes)
+                                st.markdown(f'<div class="step-content">{json.dumps(parsed_json, indent=2)}</div>', unsafe_allow_html=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                return attributes
+                            except:
+                                pass
+                except:
+                    pass
+            
             if attempt < max_retries - 1:
-                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in 3 seconds...</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying in {2**(attempt+1)} seconds...</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-                time.sleep(3)  # Longer delay between retries
                 continue
             else:
                 st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
