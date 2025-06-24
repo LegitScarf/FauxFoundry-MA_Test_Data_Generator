@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import json
 import time
+import requests
 from io import StringIO
 from openai import OpenAI
+import traceback
 
 # Page configuration
 st.set_page_config(
@@ -127,6 +129,17 @@ def load_css():
         color: #e0e0e0;
     }
     
+    .error-content {
+        background: rgba(50, 0, 0, 0.5);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-left: 3px solid #ff4444;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+        color: #ff8888;
+    }
+    
     /* Table styling */
     .dataframe {
         background: rgba(20, 20, 30, 0.9) !important;
@@ -146,6 +159,7 @@ def load_css():
         padding: 1rem;
         border: 1px solid rgba(255, 0, 255, 0.2);
         text-align: center;
+        margin-bottom: 1rem;
     }
     
     .metric-value {
@@ -161,6 +175,17 @@ def load_css():
         text-transform: uppercase;
         letter-spacing: 1px;
     }
+    
+    /* Status indicators */
+    .status-online {
+        color: #00ff00;
+        font-weight: bold;
+    }
+    
+    .status-offline {
+        color: #ff4444;
+        font-weight: bold;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -171,138 +196,250 @@ def init_session_state():
         try:
             openai_api_key = st.secrets["OPENAI_API_KEY"]
             st.session_state.openai_client = OpenAI(api_key=openai_api_key)
+            st.session_state.api_key_source = "secrets"
         except:
             st.session_state.openai_client = None
+            st.session_state.api_key_source = None
+    
     if 'generated_data' not in st.session_state:
         st.session_state.generated_data = None
+    
+    if 'generation_stats' not in st.session_state:
+        st.session_state.generation_stats = {
+            'total_datasets': 0,
+            'successful_generations': 0,
+            'failed_generations': 0
+        }
 
-# Simplified attribute designer using OpenAI only
-def attribute_designer_stream(user_prompt, progress_placeholder):
+# Test OpenAI connection
+def test_openai_connection():
+    if not st.session_state.openai_client:
+        return False, "No OpenAI client configured"
+    
     try:
-        with progress_placeholder.container():
-            st.markdown('<div class="progress-container">', unsafe_allow_html=True)
-            st.markdown('<div class="step-header">🧠 Step 1: Designing Attribute Structure</div>', unsafe_allow_html=True)
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Simulate progress
-            for i in range(100):
-                progress_bar.progress(i + 1)
-                if i < 30:
-                    status_text.text("Analyzing data requirements...")
-                elif i < 60:
-                    status_text.text("Identifying column types...")
-                elif i < 90:
-                    status_text.text("Generating attribute schema...")
-                else:
-                    status_text.text("Finalizing structure...")
-                time.sleep(0.01)
-            
-            # Use OpenAI for attribute design
-            prompt = f"""You are a data schema designer. Analyze the user's request and return ONLY a valid JSON object with field names and their data types.
-
-Rules:
-- Return only valid JSON, no additional text
-- Use common data types: "String", "Integer", "Float", "Boolean", "Date"
-- Field names should be clear and descriptive
-
-User request: {user_prompt}
-
-JSON schema:"""
-            
-            messages = [
-                {"role": "system", "content": "You are a data schema analyzer. Return only valid JSON with no additional text."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = st.session_state.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                stream=False,
-                temperature=0.3,
-                max_tokens=500
-            )
-            
-            attributes = response.choices[0].message.content.strip()
-            
-            # Clean up the response to ensure it's valid JSON
-            if not attributes.startswith('{'):
-                json_start = attributes.find('{')
-                if json_start != -1:
-                    attributes = attributes[json_start:]
-            
-            if not attributes.endswith('}'):
-                json_end = attributes.rfind('}')
-                if json_end != -1:
-                    attributes = attributes[:json_end + 1]
-            
-            # Test if it's valid JSON
-            try:
-                json.loads(attributes)
-            except:
-                attributes = '{"error": "Invalid JSON generated"}'
-            
-            st.markdown(f'<div class="step-content">{attributes}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        return attributes
-        
+        # Test with a simple completion
+        response = st.session_state.openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Test"}],
+            max_tokens=5,
+            timeout=10
+        )
+        return True, "Connection successful"
     except Exception as e:
-        st.error(f"Error in attribute designer: {str(e)}")
-        return '{"error": "Failed to generate attributes"}'
+        return False, f"Connection failed: {str(e)}"
 
-# Enhanced dataset generator with streaming
-def dataset_generator_stream(attributes, progress_placeholder):
-    try:
-        if st.session_state.openai_client is None:
-            st.error("OpenAI client not initialized. Please check your API key.")
-            return None
-            
-        with progress_placeholder.container():
-            st.markdown('<div class="progress-container">', unsafe_allow_html=True)
-            st.markdown('<div class="step-header">✍️ Step 2: Generating Dataset</div>', unsafe_allow_html=True)
-            
-            system_prompt = """You are a synthetic test dataset generator. Generate accurate tabular test datasets as per the received JSON structure. Respond with a clean markdown table format."""
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Generate a dataset with these attributes: {attributes}. Create 10 rows of realistic data in markdown table format."}
-            ]
-            
-            # Simulate streaming by showing progress
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i in range(100):
-                progress_bar.progress(i + 1)
-                if i < 30:
-                    status_text.text("Analyzing data structure...")
-                elif i < 60:
-                    status_text.text("Generating realistic data...")
-                elif i < 90:
-                    status_text.text("Formatting table...")
+# Enhanced attribute designer with retry logic
+def attribute_designer_stream(user_prompt, progress_placeholder, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            with progress_placeholder.container():
+                st.markdown('<div class="progress-container">', unsafe_allow_html=True)
+                st.markdown(f'<div class="step-header">🧠 Step 1: Designing Attribute Structure (Attempt {attempt + 1}/{max_retries})</div>', unsafe_allow_html=True)
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # Simulate progress
+                for i in range(100):
+                    progress_bar.progress(i + 1)
+                    if i < 30:
+                        status_text.text("Analyzing data requirements...")
+                    elif i < 60:
+                        status_text.text("Identifying column types...")
+                    elif i < 90:
+                        status_text.text("Generating attribute schema...")
+                    else:
+                        status_text.text("Finalizing structure...")
+                    time.sleep(0.01)
+                
+                # Enhanced prompt for better JSON generation
+                prompt = f"""You are a data schema designer. Create a JSON object defining the structure for a synthetic dataset.
+
+REQUIREMENTS:
+- Return ONLY valid JSON, no markdown, no explanations
+- Use these data types only: "String", "Integer", "Float", "Boolean", "Date"
+- Create 3-8 relevant fields based on the request
+- Field names should be descriptive and use snake_case
+
+USER REQUEST: {user_prompt}
+
+Example format:
+{{"field_name": "String", "age": "Integer", "salary": "Float", "is_active": "Boolean", "hire_date": "Date"}}
+
+JSON:"""
+                
+                messages = [
+                    {"role": "system", "content": "You are a data schema generator. Return only valid JSON with field names and data types. No additional text or formatting."},
+                    {"role": "user", "content": prompt}
+                ]
+                
+                response = st.session_state.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    stream=False,
+                    temperature=0.2,
+                    max_tokens=300,
+                    timeout=30
+                )
+                
+                attributes = response.choices[0].message.content.strip()
+                
+                # Clean up the response to ensure it's valid JSON
+                attributes = attributes.replace('```json', '').replace('```', '').strip()
+                
+                if not attributes.startswith('{'):
+                    json_start = attributes.find('{')
+                    if json_start != -1:
+                        attributes = attributes[json_start:]
+                
+                if not attributes.endswith('}'):
+                    json_end = attributes.rfind('}')
+                    if json_end != -1:
+                        attributes = attributes[:json_end + 1]
+                
+                # Validate JSON
+                try:
+                    parsed_json = json.loads(attributes)
+                    if not isinstance(parsed_json, dict) or len(parsed_json) == 0:
+                        raise ValueError("Invalid JSON structure")
+                    
+                    st.markdown(f'<div class="step-content">{json.dumps(parsed_json, indent=2)}</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    return attributes
+                    
+                except json.JSONDecodeError as e:
+                    if attempt < max_retries - 1:
+                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid JSON. Retrying...</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        time.sleep(1)
+                        continue
+                    else:
+                        st.markdown(f'<div class="error-content">JSON Parse Error: {str(e)}</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        return None
+                        
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying...</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                time.sleep(2)
+                continue
+            else:
+                st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                return None
+    
+    return None
+
+# Enhanced dataset generator with streaming and retry logic
+def dataset_generator_stream(attributes, progress_placeholder, num_rows=10, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            if st.session_state.openai_client is None:
+                st.error("OpenAI client not initialized. Please check your API key.")
+                return None
+                
+            with progress_placeholder.container():
+                st.markdown('<div class="progress-container">', unsafe_allow_html=True)
+                st.markdown(f'<div class="step-header">✍️ Step 2: Generating Dataset (Attempt {attempt + 1}/{max_retries})</div>', unsafe_allow_html=True)
+                
+                # Parse attributes to understand the schema
+                try:
+                    schema = json.loads(attributes)
+                    schema_description = ", ".join([f"{k} ({v})" for k, v in schema.items()])
+                except:
+                    schema_description = attributes
+                
+                system_prompt = """You are a synthetic dataset generator. Generate realistic tabular data in markdown table format.
+
+REQUIREMENTS:
+- Generate EXACTLY the requested number of rows
+- Use realistic, diverse data that makes sense for each field type
+- Format as a proper markdown table with pipes (|)
+- Include header row and separator row with dashes
+- No additional text, explanations, or code blocks
+- Ensure data is consistent and logical"""
+                
+                user_prompt = f"""Generate a dataset with {num_rows} rows using this schema: {schema_description}
+
+Return ONLY a markdown table with:
+1. Header row with column names
+2. Separator row with dashes (e.g., |---|---|)
+3. {num_rows} data rows
+
+Example format:
+| Name | Age | City |
+|------|-----|------|
+| John | 25 | NYC |
+| Jane | 30 | LA |"""
+                
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                # Simulate streaming by showing progress
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(100):
+                    progress_bar.progress(i + 1)
+                    if i < 30:
+                        status_text.text("Analyzing data structure...")
+                    elif i < 60:
+                        status_text.text("Generating realistic data...")
+                    elif i < 90:
+                        status_text.text("Formatting table...")
+                    else:
+                        status_text.text("Finalizing dataset...")
+                    time.sleep(0.02)
+                
+                response = st.session_state.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    stream=False,
+                    temperature=0.7,
+                    max_tokens=2000,
+                    timeout=45
+                )
+                
+                dataset = response.choices[0].message.content.strip()
+                
+                # Clean up the dataset
+                dataset = dataset.replace('```markdown', '').replace('```', '').strip()
+                
+                # Validate the table format
+                if "|" in dataset and "---" in dataset:
+                    st.markdown(f'<div class="step-content">{dataset}</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    return dataset
                 else:
-                    status_text.text("Finalizing dataset...")
-                time.sleep(0.02)
-            
-            response = st.session_state.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                stream=False
-            )
-            
-            dataset = response.choices[0].message.content
-            st.markdown(f'<div class="step-content">{dataset}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        return dataset
-        
-    except Exception as e:
-        st.error(f"Error in dataset generator: {str(e)}")
-        return None
+                    if attempt < max_retries - 1:
+                        st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: Invalid table format. Retrying...</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        time.sleep(1)
+                        continue
+                    else:
+                        st.markdown(f'<div class="error-content">Failed to generate valid table format</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        return None
+                
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                st.markdown(f'<div class="error-content">Attempt {attempt + 1} failed: {error_msg}. Retrying...</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                time.sleep(2)
+                continue
+            else:
+                st.markdown(f'<div class="error-content">Final attempt failed: {error_msg}</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                return None
+    
+    return None
 
-# Enhanced validator with streaming
+# Enhanced validator with detailed feedback
 def validator_stream(markdown_table, progress_placeholder):
     with progress_placeholder.container():
         st.markdown('<div class="progress-container">', unsafe_allow_html=True)
@@ -315,57 +452,123 @@ def validator_stream(markdown_table, progress_placeholder):
             "Validating pipe characters...",
             "Verifying separator lines...",
             "Checking data consistency...",
+            "Counting rows and columns...",
             "Final validation..."
         ]
         
-        for i, check in enumerate(checks):
-            st.text(check)
-            progress_bar.progress((i + 1) * 20)
-            time.sleep(0.3)
+        validation_results = []
         
-        # Actual validation
-        if "|" not in markdown_table:
-            st.markdown('<div class="step-content">❌ Missing pipe characters (|)</div>', unsafe_allow_html=True)
+        for i, check in enumerate(checks):
+            status_text = st.text(check)
+            progress_bar.progress((i + 1) * 16)
+            time.sleep(0.2)
+        
+        # Detailed validation
+        lines = markdown_table.strip().split('\n')
+        table_lines = [line.strip() for line in lines if line.strip()]
+        
+        # Check basic structure
+        if not table_lines:
+            st.markdown('<div class="error-content">❌ Empty table</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            return False, "Empty table"
+        
+        # Check for pipe characters
+        pipe_lines = [line for line in table_lines if '|' in line]
+        if not pipe_lines:
+            st.markdown('<div class="error-content">❌ Missing pipe characters (|)</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             return False, "Missing pipe characters (|)"
         
-        if "---" not in markdown_table:
-            st.markdown('<div class="step-content">❌ Missing separator line</div>', unsafe_allow_html=True)
+        # Check for separator line
+        separator_lines = [line for line in table_lines if '---' in line or '--' in line]
+        if not separator_lines:
+            st.markdown('<div class="error-content">❌ Missing separator line</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             return False, "Missing separator line"
+        
+        # Count rows and columns
+        try:
+            header_line = pipe_lines[0]
+            header_cols = len([col.strip() for col in header_line.split('|')[1:-1] if col.strip()])
+            data_lines = [line for line in pipe_lines[1:] if '---' not in line and '--' not in line]
+            data_rows = len(data_lines)
+            
+            validation_results.append(f"✅ Found {header_cols} columns")
+            validation_results.append(f"✅ Found {data_rows} data rows")
+            validation_results.append(f"✅ Table structure is valid")
+            
+        except Exception as e:
+            validation_results.append(f"⚠️ Structure analysis warning: {str(e)}")
+        
+        # Display results
+        for result in validation_results:
+            st.markdown(f'<div class="step-content">{result}</div>', unsafe_allow_html=True)
         
         st.markdown('<div class="step-content">✅ Table validation successful!</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
     return True, "Table is valid"
 
-# Enhanced exporter
+# Enhanced exporter with better error handling
 def export_data(markdown_table, output_format):
     try:
         # Clean the markdown table
         lines = markdown_table.strip().split('\n')
-        table_lines = [line for line in lines if '|' in line and line.strip()]
+        table_lines = [line.strip() for line in lines if '|' in line and line.strip()]
         
         if len(table_lines) < 2:
-            return None, "Invalid table format"
+            return None, "Invalid table format - insufficient rows"
         
-        # Convert to DataFrame
-        header = [col.strip() for col in table_lines[0].split('|')[1:-1]]
+        # Find header and separator
+        header_line = table_lines[0]
+        separator_found = False
+        data_start_idx = 1
+        
+        for i, line in enumerate(table_lines[1:], 1):
+            if '---' in line or '--' in line:
+                separator_found = True
+                data_start_idx = i + 1
+                break
+        
+        if not separator_found:
+            data_start_idx = 1
+        
+        # Extract header
+        header = [col.strip() for col in header_line.split('|')[1:-1] if col.strip()]
+        
+        if not header:
+            return None, "No valid header columns found"
+        
+        # Extract data
         data = []
-        
-        for line in table_lines[2:]:  # Skip header and separator
+        for line in table_lines[data_start_idx:]:
+            if '---' in line or '--' in line:
+                continue
             row = [col.strip() for col in line.split('|')[1:-1]]
-            if len(row) == len(header):
-                data.append(row)
+            if len(row) >= len(header):
+                data.append(row[:len(header)])  # Ensure row matches header length
         
+        if not data:
+            return None, "No data rows found"
+        
+        # Create DataFrame
         df = pd.DataFrame(data, columns=header)
         
+        # Export based on format
         if output_format == "csv":
             csv_data = df.to_csv(index=False)
-            return csv_data, "CSV generated successfully"
+            return csv_data, f"CSV generated successfully ({len(data)} rows, {len(header)} columns)"
         elif output_format == "json":
             json_data = df.to_json(orient="records", indent=2)
-            return json_data, "JSON generated successfully"
+            return json_data, f"JSON generated successfully ({len(data)} rows, {len(header)} columns)"
+        elif output_format == "excel":
+            from io import BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, sheet_name='Generated_Data', index=False)
+            excel_data = output.getvalue()
+            return excel_data, f"Excel generated successfully ({len(data)} rows, {len(header)} columns)"
         
         return None, "Unsupported format"
         
@@ -379,33 +582,66 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">FAUXFOUNDRY</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Advanced Synthetic Dataset Generation Platform</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Advanced Synthetic Dataset Generation Platform v2.0</p>', unsafe_allow_html=True)
     
     # API Configuration in sidebar
     with st.sidebar:
         st.markdown("### 🔧 Configuration")
         
+        # Test connection button
+        if st.button("🔍 Test Connection"):
+            if st.session_state.openai_client:
+                is_connected, message = test_openai_connection()
+                if is_connected:
+                    st.success(f"✅ {message}")
+                else:
+                    st.error(f"❌ {message}")
+            else:
+                st.error("❌ No OpenAI client configured")
+        
         # Show API key status
         if st.session_state.openai_client:
-            st.success("✅ OpenAI API configured")
+            st.markdown('<p class="status-online">🟢 OpenAI API Active</p>', unsafe_allow_html=True)
+            if st.session_state.api_key_source == "secrets":
+                st.info("Using API key from Streamlit secrets")
+            else:
+                st.info("Using manually entered API key")
         else:
-            st.warning("⚠️ OpenAI API not configured")
+            st.markdown('<p class="status-offline">🔴 OpenAI API Offline</p>', unsafe_allow_html=True)
             
             # Allow manual override if secrets don't work
-            openai_key = st.text_input("OpenAI API Key (Optional Override)", 
+            openai_key = st.text_input("OpenAI API Key", 
                                      type="password", 
-                                     help="Only needed if automatic configuration fails")
+                                     help="Enter your OpenAI API key")
             
             if openai_key:
                 try:
                     st.session_state.openai_client = OpenAI(api_key=openai_key)
+                    st.session_state.api_key_source = "manual"
                     st.success("✅ OpenAI client initialized")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Invalid API key: {str(e)}")
         
-        st.markdown("### 📊 Export Options")
-        export_format = st.selectbox("Output Format", ["csv", "json"])
+        st.markdown("---")
+        st.markdown("### 📊 Generation Options")
+        num_rows = st.slider("Number of rows", min_value=5, max_value=100, value=10)
+        export_format = st.selectbox("Export Format", ["csv", "json", "excel"])
+        
+        st.markdown("---")
+        st.markdown("### 📈 Session Stats")
+        stats = st.session_state.generation_stats
+        st.metric("Total Attempts", stats['total_datasets'])
+        st.metric("Successful", stats['successful_generations'])
+        st.metric("Failed", stats['failed_generations'])
+        
+        if st.button("🔄 Reset Stats"):
+            st.session_state.generation_stats = {
+                'total_datasets': 0,
+                'successful_generations': 0,
+                'failed_generations': 0
+            }
+            st.rerun()
     
     # Main interface
     col1, col2 = st.columns([2, 1])
@@ -415,18 +651,20 @@ def main():
         user_prompt = st.text_area(
             "Describe your dataset requirements:",
             height=120,
-            placeholder="Example: Generate a dataset containing student information with columns: ID, Name, Class, Age, Gender, and Math Score. I need 15 rows of data.",
-            help="Be specific about the columns, data types, and number of rows you need."
+            placeholder="Example: Generate a dataset for an e-commerce platform with customer information including: customer ID, name, email, age, location, purchase history, and membership status. Include diverse, realistic data.",
+            help="Be specific about the columns, data types, and business context you need."
         )
         
-        col_btn1, col_btn2 = st.columns(2)
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
             generate_btn = st.button("🚀 Generate Dataset", use_container_width=True)
         with col_btn2:
             clear_btn = st.button("🗑️ Clear Results", use_container_width=True)
+        with col_btn3:
+            example_btn = st.button("📝 Load Example", use_container_width=True)
     
     with col2:
-        st.markdown("### 📈 Statistics")
+        st.markdown("### 📈 Current Dataset")
         if st.session_state.generated_data:
             try:
                 # Parse the generated data to show stats
@@ -434,13 +672,15 @@ def main():
                 table_lines = [line for line in lines if '|' in line and line.strip()]
                 
                 if len(table_lines) >= 2:
-                    rows = len(table_lines) - 2  # Exclude header and separator
-                    cols = len([col for col in table_lines[0].split('|')[1:-1] if col.strip()])
+                    header_line = table_lines[0]
+                    cols = len([col.strip() for col in header_line.split('|')[1:-1] if col.strip()])
+                    data_lines = [line for line in table_lines[1:] if '---' not in line and '--' not in line]
+                    rows = len(data_lines)
                     
                     st.markdown(f'''
                     <div class="metric-container">
                         <div class="metric-value">{rows}</div>
-                        <div class="metric-label">Rows Generated</div>
+                        <div class="metric-label">Data Rows</div>
                     </div>
                     ''', unsafe_allow_html=True)
                     
@@ -450,15 +690,36 @@ def main():
                         <div class="metric-label">Columns</div>
                     </div>
                     ''', unsafe_allow_html=True)
+                    
+                    # Show success rate
+                    if st.session_state.generation_stats['total_datasets'] > 0:
+                        success_rate = int((st.session_state.generation_stats['successful_generations'] / 
+                                          st.session_state.generation_stats['total_datasets']) * 100)
+                        st.markdown(f'''
+                        <div class="metric-container">
+                            <div class="metric-value">{success_rate}%</div>
+                            <div class="metric-label">Success Rate</div>
+                        </div>
+                        ''', unsafe_allow_html=True)
             except:
                 pass
         else:
             st.markdown('''
             <div class="metric-container">
                 <div class="metric-value">0</div>
-                <div class="metric-label">Datasets Generated</div>
+                <div class="metric-label">No Data</div>
             </div>
             ''', unsafe_allow_html=True)
+    
+    # Load example
+    if example_btn:
+        st.session_state.example_prompt = "Generate a customer database for a subscription-based streaming service with fields: customer_id, full_name, email, age, subscription_plan, monthly_fee, join_date, last_login, total_watch_hours, favorite_genre, and account_status. Create diverse, realistic customer profiles."
+        st.rerun()
+    
+    # Use example prompt if set
+    if hasattr(st.session_state, 'example_prompt'):
+        user_prompt = st.session_state.example_prompt
+        delattr(st.session_state, 'example_prompt')
     
     # Clear results
     if clear_btn:
@@ -471,62 +732,130 @@ def main():
             st.error("⚠️ Please configure your OpenAI API key in the sidebar")
             return
         
+        # Update stats
+        st.session_state.generation_stats['total_datasets'] += 1
+        
         # Progress container
         progress_placeholder = st.empty()
         
-        # Step 1: Attribute Design
-        attributes = attribute_designer_stream(user_prompt, progress_placeholder)
-        
-        if attributes and "error" not in attributes.lower():
-            # Step 2: Dataset Generation
-            dataset = dataset_generator_stream(attributes, progress_placeholder)
+        try:
+            # Step 1: Attribute Design
+            st.info("🚀 Starting dataset generation process...")
+            attributes = attribute_designer_stream(user_prompt, progress_placeholder)
             
-            if dataset:
-                # Step 3: Validation
-                valid, message = validator_stream(dataset, progress_placeholder)
+            if attributes:
+                # Step 2: Dataset Generation
+                dataset = dataset_generator_stream(attributes, progress_placeholder, num_rows)
                 
-                if valid:
-                    # Step 4: Export
-                    with progress_placeholder.container():
-                        st.markdown('<div class="progress-container">', unsafe_allow_html=True)
-                        st.markdown('<div class="step-header">📦 Step 4: Preparing Export</div>', unsafe_allow_html=True)
-                        
-                        export_data_content, export_message = export_data(dataset, export_format)
-                        
-                        if export_data_content:
-                            st.markdown(f'<div class="step-content">✅ {export_message}</div>', unsafe_allow_html=True)
+                if dataset:
+                    # Step 3: Validation
+                    valid, message = validator_stream(dataset, progress_placeholder)
+                    
+                    if valid:
+                        # Step 4: Export
+                        with progress_placeholder.container():
+                            st.markdown('<div class="progress-container">', unsafe_allow_html=True)
+                            st.markdown('<div class="step-header">📦 Step 4: Preparing Export</div>', unsafe_allow_html=True)
                             
-                            # Download button
-                            filename = f"synthetic_data.{export_format}"
-                            st.download_button(
-                                label=f"📥 Download {export_format.upper()}",
-                                data=export_data_content,
-                                file_name=filename,
-                                mime=f"text/{export_format}"
-                            )
-                        else:
-                            st.markdown(f'<div class="step-content">❌ {export_message}</div>', unsafe_allow_html=True)
+                            export_data_content, export_message = export_data(dataset, export_format)
+                            
+                            if export_data_content:
+                                st.markdown(f'<div class="step-content">✅ {export_message}</div>', unsafe_allow_html=True)
+                                
+                                # Download button
+                                filename = f"fauxfoundry_data.{export_format}"
+                                mime_type = {
+                                    "csv": "text/csv",
+                                    "json": "application/json",
+                                    "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                }.get(export_format, "text/plain")
+                                
+                                st.download_button(
+                                    label=f"📥 Download {export_format.upper()}",
+                                    data=export_data_content,
+                                    file_name=filename,
+                                    mime=mime_type,
+                                    use_container_width=True
+                                )
+                            else:
+                                st.markdown(f'<div class="error-content">❌ {export_message}</div>', unsafe_allow_html=True)
+                            
+                            st.markdown('</div>', unsafe_allow_html=True)
                         
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Store generated data
-                    st.session_state.generated_data = dataset
-                    
-                    # Display the generated table
-                    st.markdown("### 📋 Generated Dataset Preview")
-                    st.markdown(dataset)
-                    
+                        # Store generated data and update success stats
+                        st.session_state.generated_data = dataset
+                        st.session_state.generation_stats['successful_generations'] += 1
+                        
+                        # Display the generated table
+                        st.markdown("### 📋 Generated Dataset Preview")
+                        
+                        # Create expandable section for large datasets
+                        with st.expander("View Full Dataset", expanded=True):
+                            st.markdown(dataset)
+                        
+                        # Show data analysis
+                        try:
+                            lines = dataset.strip().split('\n')
+                            table_lines = [line for line in lines if '|' in line and line.strip()]
+                            if len(table_lines) >= 2:
+                                st.success(f"✅ Successfully generated {len(table_lines)-2} rows of synthetic data!")
+                        except:
+                            pass
+                        
+                    else:
+                        st.error(f"❌ Validation failed: {message}")
+                        st.session_state.generation_stats['failed_generations'] += 1
                 else:
-                    st.error(f"Validation failed: {message}")
+                    st.error("❌ Failed to generate dataset")
+                    st.session_state.generation_stats['failed_generations'] += 1
             else:
-                st.error("Failed to generate dataset")
-        else:
-            st.error("Failed to design attributes")
+                st.error("❌ Failed to design attribute structure")
+                st.session_state.generation_stats['failed_generations'] += 1
+                
+        except Exception as e:
+            st.error(f"❌ Unexpected error: {str(e)}")
+            st.session_state.generation_stats['failed_generations'] += 1
+            
+            # Show detailed error in expander
+            with st.expander("Error Details"):
+                st.code(traceback.format_exc())
     
     elif generate_btn and not user_prompt:
         st.warning("⚠️ Please enter a dataset description")
+    
+    # Footer with tips
+    st.markdown("---")
+    st.markdown("### 💡 Pro Tips")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        **🎯 Better Prompts**
+        - Be specific about data types
+        - Mention business context
+        - Include relationships between fields
+        - Specify realistic constraints
+        """)
+    
+    with col2:
+        st.markdown("""
+        **⚡ Performance**
+        - Start with smaller datasets (10-25 rows)
+        - Test connection before large generations
+        - Use retry logic for better reliability
+        - Monitor your API usage
+        """)
+    
+    with col3:
+        st.markdown("""
+        **📊 Data Quality**
+        - Review generated data for accuracy
+        - Check for realistic value ranges
+        - Validate data relationships
+        - Consider data privacy implications
+        """)
 
 if __name__ == "__main__":
     main()
-                
                 #
