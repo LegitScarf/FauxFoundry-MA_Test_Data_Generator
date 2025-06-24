@@ -169,7 +169,12 @@ def load_css():
 # Initialize session state
 def init_session_state():
     if 'openai_client' not in st.session_state:
-        st.session_state.openai_client = None
+        # Try to load API key from Streamlit secrets first
+        try:
+            openai_api_key = st.secrets["OPENAI_API_KEY"]
+            st.session_state.openai_client = OpenAI(api_key=openai_api_key)
+        except:
+            st.session_state.openai_client = None
     if 'hf_model' not in st.session_state:
         st.session_state.hf_model = None
     if 'hf_tokenizer' not in st.session_state:
@@ -391,12 +396,24 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 Configuration")
         
-        openai_key = st.text_input("OpenAI API Key", type="password", 
-                                  help="Enter your OpenAI API key for dataset generation")
-        
-        if openai_key:
-            st.session_state.openai_client = OpenAI(api_key=openai_key)
-            st.success("✅ OpenAI client initialized")
+        # Show API key status
+        if st.session_state.openai_client:
+            st.success("✅ OpenAI API configured")
+        else:
+            st.warning("⚠️ OpenAI API not configured")
+            
+            # Allow manual override if secrets don't work
+            openai_key = st.text_input("OpenAI API Key (Optional Override)", 
+                                     type="password", 
+                                     help="Only needed if automatic configuration fails")
+            
+            if openai_key:
+                try:
+                    st.session_state.openai_client = OpenAI(api_key=openai_key)
+                    st.success("✅ OpenAI client initialized")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Invalid API key: {str(e)}")
         
         st.markdown("### 📊 Export Options")
         export_format = st.selectbox("Output Format", ["csv", "json"])
