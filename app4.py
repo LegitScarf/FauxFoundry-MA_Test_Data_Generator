@@ -190,40 +190,42 @@ def attribute_designer_stream(user_prompt, progress_placeholder):
                 st.markdown('<div class="progress-container">', unsafe_allow_html=True)
                 st.markdown('<div class="step-header">🧠 Loading AI Models...</div>', unsafe_allow_html=True)
                 
-                # Initialize model
-                model_id = "mistralai/Mistral-7B-Instruct-v0.2"
+                # Initialize model with better error handling
+                model_id = "distilbert-base-uncased"  # Using lighter model for better compatibility
                 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                status_text.text("Loading tokenizer...")
-                progress_bar.progress(25)
+                try:
+                    status_text.text("Loading tokenizer...")
+                    progress_bar.progress(25)
+                    
+                    # Use a simpler approach without quantization for deployment
+                    tokenizer = AutoTokenizer.from_pretrained(model_id)
+                    st.session_state.hf_tokenizer = tokenizer
+                    
+                    status_text.text("Loading model...")
+                    progress_bar.progress(75)
+                    
+                    # Simplified model loading without device_map for compatibility
+                    model = AutoModelForCausalLM.from_pretrained(
+                        "gpt2",  # Using GPT-2 as it's more reliable for text generation
+                        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                    )
+                    st.session_state.hf_model = model
+                    
+                    progress_bar.progress(100)
+                    status_text.text("Model loaded successfully!")
+                    
+                except Exception as model_error:
+                    # Fallback: Use OpenAI for attribute design too
+                    st.warning(f"HuggingFace model loading failed: {str(model_error)}")
+                    st.info("Falling back to OpenAI for attribute design...")
+                    st.session_state.hf_model = "fallback"
+                    st.session_state.hf_tokenizer = "fallback"
+                    progress_bar.progress(100)
+                    status_text.text("Using OpenAI fallback for attribute design")
                 
-                tokenizer = AutoTokenizer.from_pretrained(model_id)
-                st.session_state.hf_tokenizer = tokenizer
-                
-                status_text.text("Configuring quantization...")
-                progress_bar.progress(50)
-                
-                bnb_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype="bfloat16"
-                )
-                
-                status_text.text("Loading model...")
-                progress_bar.progress(75)
-                
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_id,
-                    quantization_config=bnb_config,
-                    device_map="auto"
-                )
-                st.session_state.hf_model = model
-                
-                progress_bar.progress(100)
-                status_text.text("Model loaded successfully!")
                 st.markdown('</div>', unsafe_allow_html=True)
         
         # Generate attributes
@@ -231,28 +233,75 @@ def attribute_designer_stream(user_prompt, progress_placeholder):
             st.markdown('<div class="progress-container">', unsafe_allow_html=True)
             st.markdown('<div class="step-header">🧠 Step 1: Designing Attribute Structure</div>', unsafe_allow_html=True)
             
-            prompt = f"""You are an agent that helps in specifying the data type of the columns requested by the user. Return the data type in JSON format.
+            if st.session_state.hf_model == "fallback":
+                # Use OpenAI for attribute design
+                prompt = f"""You are an agent that helps in specifying the data type of columns requested by the user. Return ONLY a valid JSON object with field names and their data types.
 
 Example format: {{"ID": "Integer", "Name": "String", "Age": "Integer"}}
 
 User request: {user_prompt}
 
-JSON response:"""
-            
-            generator = pipeline("text-generation", 
-                               model=st.session_state.hf_model, 
-                               tokenizer=st.session_state.hf_tokenizer)
-            
-            result = generator(prompt, max_new_tokens=200, temperature=0.7)[0]["generated_text"]
-            
-            # Extract JSON from result
-            json_start = result.find('{')
-            json_end = result.rfind('}') + 1
-            
-            if json_start != -1 and json_end != -1:
-                attributes = result[json_start:json_end]
+Respond with only the JSON object, no additional text:"""
+                
+                try:
+                    messages = [
+                        {"role": "system", "content": "You are a data type analyzer. Return only valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ]
+                    
+                    response = st.session_state.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages,
+                        stream=False,
+                        temperature=0.3
+                    )
+                    
+                    attributes = response.choices[0].message.content.strip()
+                    
+                    # Clean up the response to ensure it's valid JSON
+                    if not attributes.startswith('{'):
+                        json_start = attributes.find('{')
+                        if json_start != -1:
+                            attributes = attributes[json_start:]
+                    
+                    if not attributes.endswith('}'):
+                        json_end = attributes.rfind('}')
+                        if json_end != -1:
+                            attributes = attributes[:json_end + 1]
+                    
+                except Exception as e:
+                    st.error(f"OpenAI fallback failed: {str(e)}")
+                    attributes = '{"error": "Could not generate attributes"}'
+                
             else:
-                attributes = '{"error": "Could not extract attributes"}'
+                # Use HuggingFace model
+                prompt = f"""You are an agent that helps in specifying the data type of columns. Return JSON format only.
+
+User request: {user_prompt}
+
+JSON response: """
+                
+                try:
+                    generator = pipeline("text-generation", 
+                                       model=st.session_state.hf_model, 
+                                       tokenizer=st.session_state.hf_tokenizer,
+                                       device=0 if torch.cuda.is_available() else -1)
+                    
+                    result = generator(prompt, max_new_tokens=150, temperature=0.7, 
+                                     do_sample=True, pad_token_id=50256)[0]["generated_text"]
+                    
+                    # Extract JSON from result
+                    json_start = result.find('{')
+                    json_end = result.rfind('}') + 1
+                    
+                    if json_start != -1 and json_end != -1:
+                        attributes = result[json_start:json_end]
+                    else:
+                        attributes = '{"error": "Could not extract attributes"}'
+                        
+                except Exception as e:
+                    st.error(f"HuggingFace generation failed: {str(e)}")
+                    attributes = '{"error": "Could not generate attributes"}'
             
             st.markdown(f'<div class="step-content">{attributes}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
