@@ -485,7 +485,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>FAUXFOUNDRY</h1>
-        <p>Neural Data Synthesis Laboratory</p>
+        <p>Synthetic Test Data Generator</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -653,9 +653,9 @@ def main():
     # Footer
     st.markdown("""
     <div class="footer">
-        <p><span class="brand">FAUXFOUNDRY</span> | Neural Data Synthesis Laboratory</p>
-        <p>Powered by Gemini Neural Core & GPT-4o Matrix | Built with Quantum Streamlit</p>
-        <p>⚡ Synthetic Intelligence Division ⚡</p>
+        <p><span class="brand">FAUXFOUNDRY</span> | Synthetic Test Data Generator</p>
+        <p>Powered by Gemini & GPT-4o Matrix | Built with Streamlit</p>
+        <p>⚡ Synthetic Intelligence Laboratory ⚡</p>
     </div>
     """, unsafe_allow_html=True)
 
