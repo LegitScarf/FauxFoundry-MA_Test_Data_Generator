@@ -12,13 +12,13 @@ FauxFoundry is an intelligent synthetic test data generator that leverages cutti
 
 ## ✨ Key Features
 
-- ** 3-Agent Architecture**: Sequential processing with specialized AI agents for optimal results
-- ** Modern UI**: Sleek Streamlit interface with custom CSS styling
-- ** Dual AI Models**: Google Gemini for schema generation, OpenAI GPT-4o-mini for data creation
-- ** Real-time Progress**: Live progress tracking and status updates
-- ** Multiple Export Formats**: Download as CSV or JSON schema
-- ** Responsive Design**: Works seamlessly on desktop and mobile devices
-- ** Extensible**: Support for custom data types and formats
+-  3-Agent Architecture: Sequential processing with specialized AI agents for optimal results
+-  Modern UI: Sleek Streamlit interface with custom CSS styling
+-  Dual AI Models: Google Gemini for schema generation, OpenAI GPT-4o-mini for data creation
+-  Real-time Progress: Live progress tracking and status updates
+-  Multiple Export Formats: Download as CSV or JSON schema
+-  Responsive Design: Works seamlessly on desktop and mobile devices
+-  Extensible: Support for custom data types and formats
 
 ##  Quick Start
 
