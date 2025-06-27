@@ -1,4 +1,4 @@
-# FauxFoundry 🏭
+# FauxFoundry 🦊
 
 *A powerful synthetic test data generator powered by AI*
 
@@ -12,15 +12,15 @@ FauxFoundry is an intelligent synthetic test data generator that leverages cutti
 
 ## ✨ Key Features
 
-- **🤖 3-Agent Architecture**: Sequential processing with specialized AI agents for optimal results
-- **🎨 Modern UI**: Sleek Streamlit interface with custom CSS styling
-- **⚡ Dual AI Models**: Google Gemini for schema generation, OpenAI GPT-4o-mini for data creation
-- **📊 Real-time Progress**: Live progress tracking and status updates
-- **📁 Multiple Export Formats**: Download as CSV or JSON schema
-- **📱 Responsive Design**: Works seamlessly on desktop and mobile devices
-- **🔧 Extensible**: Support for custom data types and formats
+- ** 3-Agent Architecture**: Sequential processing with specialized AI agents for optimal results
+- ** Modern UI**: Sleek Streamlit interface with custom CSS styling
+- ** Dual AI Models**: Google Gemini for schema generation, OpenAI GPT-4o-mini for data creation
+- ** Real-time Progress**: Live progress tracking and status updates
+- ** Multiple Export Formats**: Download as CSV or JSON schema
+- ** Responsive Design**: Works seamlessly on desktop and mobile devices
+- ** Extensible**: Support for custom data types and formats
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -130,7 +130,7 @@ FauxFoundry supports a wide variety of data types:
 "Create customer reviews with customer_id, product_rating, review_text, purchase_date, and recommendation status. Generate 30 entries."
 ```
 
-## 🚀 Deployment
+##  Deployment
 
 ### Streamlit Cloud
 
@@ -256,7 +256,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
-  <p>Made with ❤️ by [Your Name]</p>
   <p>
     <a href="https://github.com/yourusername/fauxfoundry">⭐ Star this repo</a> •
     <a href="https://github.com/yourusername/fauxfoundry/issues">🐛 Report Bug</a> •
