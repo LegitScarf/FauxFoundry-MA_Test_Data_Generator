@@ -535,7 +535,7 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.markdown("## 📡 DATA SYNTHESIS REQUEST")
+        st.markdown("## DATA SYNTHESIS REQUEST")
         
         # User input
         user_prompt = st.text_area(
@@ -545,7 +545,7 @@ def main():
         )
         
         # Generate button
-        if st.button("🚀 INITIATE DATA SYNTHESIS", disabled=not hasattr(st.session_state, 'apis_configured') or not st.session_state.apis_configured):
+        if st.button(" INITIATE DATA SYNTHESIS", disabled=not hasattr(st.session_state, 'apis_configured') or not st.session_state.apis_configured):
             if not user_prompt:
                 st.markdown('<div class="error-message">❌ No transmission received. Please provide synthesis parameters.</div>', unsafe_allow_html=True)
                 return
@@ -556,7 +556,7 @@ def main():
             
             try:
                 # Agent 1: Generate Attributes
-                status_text.markdown("🤖 **NEURAL AGENT 01**: Analyzing transmission and parsing data schema...")
+                status_text.markdown(" **NEURAL AGENT 01**: Analyzing transmission and parsing data schema...")
                 progress_bar.progress(10)
                 
                 with st.spinner("Executing schema analysis protocol..."):
@@ -608,7 +608,7 @@ def main():
                 status_text.empty()
     
     with col2:
-        st.markdown("## 📈 SYNTHESIS METRICS")
+        st.markdown("## SYNTHESIS METRICS")
         
         if hasattr(st.session_state, 'attributes'):
             attrs = st.session_state.attributes
