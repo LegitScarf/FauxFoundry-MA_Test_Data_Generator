@@ -1,962 +1,620 @@
 import streamlit as st
 import json
-import csv
-import io
 import pandas as pd
-from openai import OpenAI
+import io
 import re
-from typing import Dict, Any
-import time
+from typing import Dict, Any, List
+from openai import OpenAI
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
-# Configure page
+# ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="FauxFoundry",
+    page_title="FauxFoundry v2",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Sci-Fi Dark Theme CSS
+# ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+  html, body, [class*="css"] {
+      background-color: #0a0a0f;
+      color: #c8d8e8;
+      font-family: 'Share Tech Mono', monospace;
+  }
+  .stApp { background: linear-gradient(135deg, #0a0a0f 0%, #0d1117 50%, #0a0f1a 100%); }
+
+  h1, h2, h3 { font-family: 'Orbitron', monospace !important; color: #00d4ff !important; letter-spacing: 0.15em; }
+
+  .stButton > button {
+      background: linear-gradient(90deg, #003366, #0055aa);
+      color: #00d4ff;
+      border: 1px solid #00d4ff;
+      border-radius: 4px;
+      font-family: 'Orbitron', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      transition: all 0.3s;
+  }
+  .stButton > button:hover { background: linear-gradient(90deg, #0055aa, #0077cc); box-shadow: 0 0 12px #00d4ff55; }
+  .stButton > button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .stTextArea textarea, .stTextInput input {
+      background: #0d1117 !important;
+      border: 1px solid #1e3a5f !important;
+      color: #c8d8e8 !important;
+      font-family: 'Share Tech Mono', monospace !important;
+      border-radius: 4px;
+  }
+  .stTextArea textarea:focus, .stTextInput input:focus { border-color: #00d4ff !important; box-shadow: 0 0 8px #00d4ff33 !important; }
+
+  .stDownloadButton > button {
+      background: linear-gradient(90deg, #003322, #006644) !important;
+      color: #00ff88 !important;
+      border: 1px solid #00ff88 !important;
+      font-family: 'Orbitron', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      width: 100%;
+  }
+  .stDownloadButton > button:hover { box-shadow: 0 0 12px #00ff8855 !important; }
+
+  .stProgress > div > div { background: linear-gradient(90deg, #0055aa, #00d4ff) !important; }
+
+  .stMetric { background: #0d1117; border: 1px solid #1e3a5f; border-radius: 6px; padding: 1rem; }
+  .stMetric label { color: #7090b0 !important; font-size: 0.7rem !important; letter-spacing: 0.1em; }
+  .stMetric [data-testid="stMetricValue"] { color: #00d4ff !important; font-family: 'Orbitron', monospace; }
+
+  .stTabs [data-baseweb="tab-list"] { background: #0d1117; border-bottom: 1px solid #1e3a5f; gap: 4px; }
+  .stTabs [data-baseweb="tab"] { background: #111827; color: #7090b0; border: 1px solid #1e3a5f; border-radius: 4px 4px 0 0; font-family: 'Orbitron', monospace; font-size: 0.65rem; letter-spacing: 0.08em; }
+  .stTabs [aria-selected="true"] { background: #0d2244 !important; color: #00d4ff !important; border-color: #00d4ff !important; }
+
+  .hero { text-align: center; padding: 2.5rem 0 1.5rem; }
+  .hero h1 { font-size: 3.2rem; letter-spacing: 0.4em; background: linear-gradient(90deg, #00d4ff, #0088ff, #00d4ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .hero p { color: #4080b0; letter-spacing: 0.25em; font-size: 0.85rem; margin-top: -0.5rem; }
+
+  .status-ok  { color: #00ff88; font-family: 'Share Tech Mono', monospace; }
+  .status-off { color: #ffaa00; font-family: 'Share Tech Mono', monospace; }
+  .status-err { color: #ff4444; font-family: 'Share Tech Mono', monospace; }
+
+  .panel { background: #0d1117; border: 1px solid #1e3a5f; border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  .agent-label { color: #0088ff; font-family: 'Orbitron', monospace; font-size: 0.7rem; letter-spacing: 0.1em; margin-bottom: 0.4rem; }
+
+  div[data-testid="stSidebar"] { background: #0a0d14; border-right: 1px solid #1e3a5f; }
+  .stSelectbox > div { background: #0d1117 !important; border: 1px solid #1e3a5f !important; color: #c8d8e8 !important; }
+
+  .rel-badge { display: inline-block; background: #0d2244; border: 1px solid #0055aa; border-radius: 3px; padding: 2px 8px; margin: 2px; font-size: 0.7rem; color: #00d4ff; font-family: 'Share Tech Mono', monospace; }
+  footer { visibility: hidden; }
+</style>
 """, unsafe_allow_html=True)
 
 
+# ── Generator class ────────────────────────────────────────────────────────────
 class SyntheticDataGenerator:
     def __init__(self):
-        self.openai_client = None
+        self.client: OpenAI | None = None
 
-    def setup_openai(self, api_key: str):
-        """Setup OpenAI client"""
+    def setup(self, api_key: str) -> bool:
         try:
-            self.openai_client = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key)
+            # quick connectivity check
+            self.client.models.list()
             return True
         except Exception as e:
-            st.error(f"Failed to setup OpenAI: {str(e)}")
+            st.error(f"OpenAI setup failed: {e}")
             return False
 
-    def generate_attributes(self, user_prompt: str) -> Dict[str, Any]:
-        """Agent 1: Generate attributes using OpenAI GPT-4o-mini"""
-        if not self.openai_client:
-            raise Exception("OpenAI client not configured")
+    # ── Agent 1 ── schema ──────────────────────────────────────────────────────
+    def generate_schema(self, brief: str, mode: str, num_rows: int) -> Dict[str, Any]:
+        if not self.client:
+            raise RuntimeError("OpenAI client not configured")
 
-        prompt = f"""
-Based on the following user request, create a JSON schema that defines the data attributes and their types.
-
-User Request: {user_prompt}
-
-Please analyze the request and create a JSON object with the following structure:
+        if mode == "Simple (Single Table)":
+            system = "You are a data schema designer. Return ONLY valid JSON, no markdown fences."
+            user = f"""
+From the user request below, build a single-table schema JSON:
 {{
-    "attributes": {{
-        "column_name": "data_type",
-        ...
-    }},
-    "num_rows": number_of_rows_requested,
-    "dataset_description": "brief description of the dataset"
+  "tables": [
+    {{
+      "name": "<TableName>",
+      "primary_key": "<pk_column>",
+      "foreign_keys": [],
+      "columns": {{ "<col>": "<type>", ... }}
+    }}
+  ],
+  "num_rows": {num_rows},
+  "dataset_description": "<short description>"
+}}
+Supported types: string, integer, float, boolean, date, email, phone, address, url
+Request: {brief}
+"""
+        else:  # Relational
+            system = "You are a relational database schema designer. Return ONLY valid JSON, no markdown fences."
+            user = f"""
+Analyse the project brief and produce a multi-table relational schema JSON.
+Rules:
+- Identify ALL tables mentioned (or implied) in the brief.
+- Identify all primary keys and foreign key relationships.
+- Order tables so parent tables (no foreign keys) come first.
+- Use {num_rows} as the base row count for the root/parent table; child tables get {num_rows} rows too unless the brief specifies otherwise.
+- Supported column types: string, integer, float, boolean, date, email, phone, address, url
+
+Output EXACTLY this structure:
+{{
+  "tables": [
+    {{
+      "name": "<TableName>",
+      "primary_key": "<pk_column>",
+      "foreign_keys": [
+        {{ "column": "<fk_col>", "references_table": "<ParentTable>", "references_column": "<pk_col>" }}
+      ],
+      "columns": {{ "<col>": "<type>", ... }}
+    }}
+  ],
+  "num_rows": {num_rows},
+  "dataset_description": "<short description>"
 }}
 
-Supported data types: string, integer, float, boolean, date, email, phone, address, url
-
-Return ONLY the JSON object, no additional text or explanation.
+Project brief:
+{brief}
 """
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a data schema designer. Return only valid JSON with no extra text or markdown."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=500
-            )
-            json_text = response.choices[0].message.content.strip()
+        resp = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.2,
+            max_tokens=1200,
+        )
+        raw = resp.choices[0].message.content.strip()
+        raw = self._strip_fences(raw)
+        return json.loads(raw)
 
-            # Clean up in case model wraps in code fences
-            if "```json" in json_text:
-                json_text = json_text.split("```json")[1].split("```")[0]
-            elif "```" in json_text:
-                json_text = json_text.split("```")[1]
+    # ── Agent 2 ── data rows ───────────────────────────────────────────────────
+    def generate_table_data(
+        self,
+        table: Dict[str, Any],
+        num_rows: int,
+        parent_ids: Dict[str, List[Any]] | None = None,
+    ) -> pd.DataFrame:
+        if not self.client:
+            raise RuntimeError("OpenAI client not configured")
 
-            attributes = json.loads(json_text.strip())
-            return attributes
-        except Exception as e:
-            raise Exception(f"Error generating attributes: {str(e)}")
-
-    def generate_dataset(self, attributes: Dict[str, Any]) -> str:
-        """Agent 2: Generate dataset using OpenAI GPT-4o-mini"""
-        if not self.openai_client:
-            raise Exception("OpenAI client not configured")
-
-        attr_dict = attributes.get("attributes", {})
-        num_rows = attributes.get("num_rows", 10)
-        description = attributes.get("dataset_description", "")
+        fk_context = ""
+        if parent_ids:
+            lines = []
+            for fk in table.get("foreign_keys", []):
+                col = fk["column"]
+                ref_table = fk["references_table"]
+                ref_col = fk["references_column"]
+                ids = parent_ids.get(f"{ref_table}.{ref_col}", [])
+                # Show first 60 IDs so the prompt doesn't blow up for large sets
+                sample = ids[:60]
+                lines.append(
+                    f'- Column "{col}" must contain only values from this list '
+                    f'(the existing {ref_table}.{ref_col} values): {sample}'
+                )
+            fk_context = "\nForeign-key constraints (STRICTLY enforce):\n" + "\n".join(lines)
 
         prompt = f"""
-Generate a realistic synthetic dataset with the following specifications:
+Generate a realistic synthetic dataset for the table "{table['name']}".
 
-Dataset Description: {description}
+Columns and types:
+{json.dumps(table['columns'], indent=2)}
+
+Primary key column: {table.get('primary_key', 'N/A')} — values must be unique.
 Number of rows: {num_rows}
-Columns and their types:
-{json.dumps(attr_dict, indent=2)}
+{fk_context}
 
 Requirements:
-1. Generate realistic, diverse data that makes sense for each column type
-2. Ensure data consistency and logical relationships between columns
-3. Return the data in markdown table format
-4. Include proper headers
-5. Make sure all data is appropriate and follows the specified data types
-
-Return ONLY the markdown table, no additional text or explanation.
+1. Produce realistic, diverse, internally-consistent data.
+2. Primary key values must be unique across all rows.
+3. Honour every foreign-key constraint exactly — use ONLY the provided IDs.
+4. Return a markdown table (pipe-delimited) with a header row. Nothing else.
 """
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a synthetic data generator. Generate realistic, diverse datasets in markdown table format."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=2000
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise Exception(f"Error generating dataset: {str(e)}")
+        resp = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a synthetic data generator. Output only a markdown table."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.75,
+            max_tokens=3500,
+        )
+        md = resp.choices[0].message.content
+        return self._markdown_to_df(md)
 
-    def markdown_to_csv(self, markdown_table: str) -> str:
-        """Agent 3: Convert markdown table to CSV"""
-        try:
-            lines = markdown_table.strip().split('\n')
-
-            table_lines = []
-            in_table = False
-            for line in lines:
-                if '|' in line and not in_table:
-                    in_table = True
-                    table_lines.append(line)
-                elif '|' in line and in_table:
-                    table_lines.append(line)
-                elif in_table and '|' not in line:
-                    break
-
-            if not table_lines:
-                raise Exception("No table found in markdown")
-
-            csv_lines = []
-            for i, line in enumerate(table_lines):
-                if re.match(r'^[\|\-\:\s]+$', line):
+    # ── Agent 3 ── validation + repair ────────────────────────────────────────
+    def validate_and_repair(
+        self,
+        tables: Dict[str, pd.DataFrame],
+        schema: Dict[str, Any],
+    ) -> Dict[str, pd.DataFrame]:
+        """Enforce FK integrity in-process (no LLM call needed)."""
+        repaired = dict(tables)
+        for tbl in schema["tables"]:
+            name = tbl["name"]
+            if name not in repaired:
+                continue
+            df = repaired[name].copy()
+            for fk in tbl.get("foreign_keys", []):
+                col = fk["column"]
+                ref_t = fk["references_table"]
+                ref_c = fk["references_column"]
+                if ref_t not in repaired or col not in df.columns:
                     continue
-                cells = [cell.strip() for cell in line.split('|')]
-                cells = [cell for cell in cells if cell]
-                if cells:
-                    csv_lines.append(','.join(f'"{cell}"' for cell in cells))
+                valid_ids = repaired[ref_t][ref_c].tolist()
+                # Replace invalid FK values by cycling through valid ones
+                mask = ~df[col].astype(str).isin([str(v) for v in valid_ids])
+                if mask.any():
+                    cycle = [valid_ids[i % len(valid_ids)] for i in range(mask.sum())]
+                    df.loc[mask, col] = cycle
+            repaired[name] = df
+        return repaired
 
-            return '\n'.join(csv_lines)
-        except Exception as e:
-            raise Exception(f"Error converting to CSV: {str(e)}")
+    # ── helpers ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _strip_fences(text: str) -> str:
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        return text.strip()
+
+    @staticmethod
+    def _markdown_to_df(md: str) -> pd.DataFrame:
+        lines = [l for l in md.strip().split("\n") if "|" in l]
+        # remove separator rows
+        lines = [l for l in lines if not re.match(r"^[\|\-\:\s]+$", l)]
+        if len(lines) < 2:
+            raise ValueError("Model returned no usable table rows.")
+        rows = []
+        for l in lines:
+            cells = [c.strip() for c in l.split("|")]
+            cells = [c for c in cells if c != ""]
+            rows.append(cells)
+        headers = rows[0]
+        data = rows[1:]
+        # Pad / trim so every row matches header length
+        n = len(headers)
+        data = [r[:n] + [""] * (n - len(r)) for r in data]
+        return pd.DataFrame(data, columns=headers)
+
+    # ── Excel builder ──────────────────────────────────────────────────────────
+    @staticmethod
+    def build_excel(tables: Dict[str, pd.DataFrame], schema: Dict[str, Any]) -> bytes:
+        wb = Workbook()
+        # Remove default sheet
+        wb.remove(wb.active)
+
+        HDR_FILL   = PatternFill("solid", fgColor="0D2244")
+        HDR_FONT   = Font(name="Calibri", bold=True, color="00D4FF", size=11)
+        CELL_FONT  = Font(name="Calibri", size=10, color="C8D8E8")
+        ALT_FILL   = PatternFill("solid", fgColor="0A1628")
+        BORDER_SIDE = Side(style="thin", color="1E3A5F")
+        CELL_BORDER = Border(left=BORDER_SIDE, right=BORDER_SIDE, top=BORDER_SIDE, bottom=BORDER_SIDE)
+
+        for tbl_def in schema["tables"]:
+            name = tbl_def["name"]
+            if name not in tables:
+                continue
+            df = tables[name]
+            ws = wb.create_sheet(title=name[:31])  # sheet name max 31 chars
+
+            ws.sheet_view.showGridLines = False
+            ws.sheet_properties.tabColor = "00D4FF"
+
+            # Header row
+            for ci, col in enumerate(df.columns, start=1):
+                cell = ws.cell(row=1, column=ci, value=col)
+                cell.font = HDR_FONT
+                cell.fill = HDR_FILL
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = CELL_BORDER
+
+            # Data rows
+            for ri, row in df.iterrows():
+                excel_row = ri + 2
+                fill = ALT_FILL if ri % 2 == 1 else None
+                for ci, val in enumerate(row, start=1):
+                    cell = ws.cell(row=excel_row, column=ci, value=val)
+                    cell.font = CELL_FONT
+                    cell.border = CELL_BORDER
+                    cell.alignment = Alignment(vertical="center")
+                    if fill:
+                        cell.fill = fill
+
+            # Auto column width
+            for ci, col in enumerate(df.columns, start=1):
+                max_len = max(
+                    len(str(col)),
+                    *[len(str(v)) for v in df.iloc[:, ci - 1]],
+                )
+                ws.column_dimensions[get_column_letter(ci)].width = min(max_len + 4, 40)
+
+            ws.row_dimensions[1].height = 22
+            ws.freeze_panes = "A2"
+
+        # ── Relationships info sheet ──────────────────────────────────────────
+        ws_rel = wb.create_sheet(title="📊 Schema Info")
+        ws_rel.sheet_properties.tabColor = "FF8800"
+        ws_rel.sheet_view.showGridLines = False
+
+        ws_rel["A1"] = "FauxFoundry v2 — Schema & Relationships"
+        ws_rel["A1"].font = Font(name="Calibri", bold=True, color="00D4FF", size=14)
+        ws_rel["A1"].fill = PatternFill("solid", fgColor="0D1117")
+
+        ws_rel["A3"] = "Dataset Description"
+        ws_rel["A3"].font = Font(bold=True, color="7090B0")
+        ws_rel["B3"] = schema.get("dataset_description", "")
+        ws_rel["B3"].font = Font(color="C8D8E8")
+
+        ws_rel["A5"] = "Table"
+        ws_rel["B5"] = "Primary Key"
+        ws_rel["C5"] = "Foreign Keys"
+        ws_rel["D5"] = "Row Count"
+        for col in "ABCD":
+            c = ws_rel[f"{col}5"]
+            c.font = Font(bold=True, color="00D4FF")
+            c.fill = PatternFill("solid", fgColor="0D2244")
+            c.border = CELL_BORDER
+
+        for ri, tbl_def in enumerate(schema["tables"], start=6):
+            name = tbl_def["name"]
+            pk   = tbl_def.get("primary_key", "")
+            fks  = "; ".join(
+                f"{fk['column']} → {fk['references_table']}.{fk['references_column']}"
+                for fk in tbl_def.get("foreign_keys", [])
+            ) or "—"
+            row_count = len(tables.get(name, pd.DataFrame()))
+            for ci, val in enumerate([name, pk, fks, row_count], start=1):
+                cell = ws_rel.cell(row=ri, column=ci, value=val)
+                cell.font = Font(name="Calibri", size=10, color="C8D8E8")
+                cell.border = CELL_BORDER
+                if ri % 2 == 0:
+                    cell.fill = PatternFill("solid", fgColor="0A1628")
+
+        for col, width in zip("ABCD", [22, 18, 48, 12]):
+            ws_rel.column_dimensions[col].width = width
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
 
 
+# ── Streamlit UI ───────────────────────────────────────────────────────────────
 def main():
-    # Header
+    # Hero
     st.markdown("""
-<div style="text-align:center; padding: 2rem 0 1rem;">
-  <h1 style="font-size: 3rem; letter-spacing: 0.3em;">FAUXFOUNDRY</h1>
-  <p style="letter-spacing: 0.2em; opacity: 0.7;">Synthetic Test Data Generator</p>
-</div>
-""", unsafe_allow_html=True)
+    <div class="hero">
+      <h1>FAUXFOUNDRY</h1>
+      <p>RELATIONAL SYNTHETIC DATA GENERATOR &nbsp;·&nbsp; V2.0</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Initialize generator
-    if 'generator' not in st.session_state:
+    if "generator" not in st.session_state:
         st.session_state.generator = SyntheticDataGenerator()
+    if "schema" not in st.session_state:
+        st.session_state.schema = None
+    if "tables" not in st.session_state:
+        st.session_state.tables = {}
 
-    # Sidebar for API key
+    gen: SyntheticDataGenerator = st.session_state.generator
+
+    # ── Sidebar ────────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("## ⚡ NEURAL INTERFACE")
 
-        openai_key = st.text_input(
-            "🧠 OpenAI API Key",
-            type="password",
-            help="Enter your OpenAI API key to activate the neural matrix"
-        )
+        api_key = st.text_input("🧠 OpenAI API Key", type="password")
+        if api_key and st.button("🔧 INITIALIZE"):
+            with st.spinner("Connecting…"):
+                ok = gen.setup(api_key)
+                st.session_state.api_ok = ok
+            if ok:
+                st.markdown('<p class="status-ok">⚡ Neural link active</p>', unsafe_allow_html=True)
+            else:
+                st.markdown('<p class="status-err">❌ Connection failed</p>', unsafe_allow_html=True)
 
-        if openai_key:
-            if st.button("🔧 INITIALIZE NEURAL NETWORK"):
-                with st.spinner("Synchronizing neural pathways..."):
-                    openai_success = st.session_state.generator.setup_openai(openai_key)
-                    if openai_success:
-                        st.markdown('<div style="color: #00ff88;">⚡ Neural network synchronized!</div>', unsafe_allow_html=True)
-                        st.session_state.apis_configured = True
-                    else:
-                        st.markdown('<div style="color: #ff4444;">❌ Neural sync failed</div>', unsafe_allow_html=True)
-                        st.session_state.apis_configured = False
-
-        if hasattr(st.session_state, 'apis_configured') and st.session_state.apis_configured:
-            st.markdown('<div style="color: #00ff88;">🟢 NEURAL LINK ACTIVE</div>', unsafe_allow_html=True)
+        linked = st.session_state.get("api_ok", False)
+        if linked:
+            st.markdown('<p class="status-ok">🟢 NEURAL LINK ACTIVE</p>', unsafe_allow_html=True)
         else:
-            st.markdown('<div style="color: #ffaa00;">🟡 NEURAL LINK OFFLINE</div>', unsafe_allow_html=True)
+            st.markdown('<p class="status-off">🟡 NEURAL LINK OFFLINE</p>', unsafe_allow_html=True)
 
-    # Main content
-    col1, col2 = st.columns([2, 1])
+        st.markdown("---")
+        st.markdown("### ⚙️ SYNTHESIS PARAMETERS")
 
-    with col1:
-        st.markdown("## DATA SYNTHESIS REQUEST")
-
-        user_prompt = st.text_area(
-            "Transmit your data requirements:",
-            placeholder="EXAMPLE TRANSMISSION: Create me a dataset about space colony inhabitants with columns: name, sector, ID number, age, and occupation. I want 20 rows of synthetic data.",
-            height=150
+        mode = st.selectbox(
+            "Mode",
+            ["Simple (Single Table)", "Advanced (Relational / Multi-Table)"],
+            help="Choose Simple for a single table, Advanced for multi-table relational datasets",
         )
+        num_rows = st.slider("Base row count", min_value=10, max_value=500, value=50, step=10)
 
-        if st.button("⚡ INITIATE DATA SYNTHESIS", disabled=not hasattr(st.session_state, 'apis_configured') or not st.session_state.apis_configured):
-            if not user_prompt:
-                st.markdown('<div style="color: #ff4444;">❌ No transmission received. Please provide synthesis parameters.</div>', unsafe_allow_html=True)
-                return
+        st.markdown("---")
+        st.markdown("### 📖 QUICK GUIDE")
+        if mode == "Simple (Single Table)":
+            st.caption("Describe your table in plain English. E.g.: *Create a dataset of 50 employees with name, age, department, salary, and hire date.*")
+        else:
+            st.caption("Paste your full project brief or table requirements. The engine will extract all tables, columns, and relationships automatically.")
 
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+    # ── Main layout ────────────────────────────────────────────────────────────
+    left, right = st.columns([2, 1])
+
+    with left:
+        st.markdown("## 📡 SYNTHESIS REQUEST")
+
+        placeholder = (
+            "Describe your single table here.\n\nExample: Create a dataset about employees with columns for name, age, department, salary, and hire date."
+            if mode == "Simple (Single Table)"
+            else
+            "Paste your full project brief here.\n\nExample:\n\nCustomer Churn Analysis\nTable: Customers — CustomerID, Name, Age, Gender, Region, Tenure, Churn\nTable: Usage — CustomerID, CallMinutes, DataUsage, MessagesSent\nTable: Feedback — CustomerID, SatisfactionScore, Complaints\nRelationships: Usage.CustomerID → Customers.CustomerID; Feedback.CustomerID → Customers.CustomerID"
+        )
+        brief = st.text_area("Transmit your requirements:", placeholder=placeholder, height=180)
+
+        ready = linked and bool(brief.strip())
+
+        if st.button("⚡ INITIATE DATA SYNTHESIS", disabled=not ready):
+            st.session_state.schema  = None
+            st.session_state.tables  = {}
+
+            prog = st.progress(0)
+            status = st.empty()
 
             try:
-                # Agent 1: Generate Attributes
-                status_text.markdown("🤖 **NEURAL AGENT 01**: Analyzing transmission and parsing data schema...")
-                progress_bar.progress(10)
-                with st.spinner("Executing schema analysis protocol..."):
-                    attributes = st.session_state.generator.generate_attributes(user_prompt)
-                progress_bar.progress(33)
+                # ── Agent 1 ── schema ──────────────────────────────────────────
+                status.markdown('<p class="agent-label">🤖 AGENT 01 — Parsing schema…</p>', unsafe_allow_html=True)
+                prog.progress(5)
+                with st.spinner("Generating schema…"):
+                    schema = gen.generate_schema(brief, mode, num_rows)
+                st.session_state.schema = schema
+                prog.progress(20)
 
-                st.markdown("### 🎯 AGENT 01 OUTPUT - Schema Matrix")
-                st.json(attributes)
+                st.markdown('<div class="panel"><div class="agent-label">AGENT 01 OUTPUT — SCHEMA MATRIX</div></div>', unsafe_allow_html=True)
+                st.json(schema)
 
-                # Agent 2: Generate Dataset
-                status_text.markdown("🤖 **NEURAL AGENT 02**: Fabricating synthetic data matrix...")
-                progress_bar.progress(50)
-                with st.spinner("Running data synthesis algorithms..."):
-                    markdown_table = st.session_state.generator.generate_dataset(attributes)
-                progress_bar.progress(66)
+                tables_def: List[Dict] = schema["tables"]
+                generated: Dict[str, pd.DataFrame] = {}
+                parent_ids: Dict[str, List] = {}
 
-                st.markdown("### 📊 AGENT 02 OUTPUT - Synthetic Data Matrix")
-                st.markdown(markdown_table)
+                total = len(tables_def)
+                for idx, tbl in enumerate(tables_def):
+                    tname = tbl["name"]
+                    pct_start = 20 + int(60 * idx / total)
+                    pct_end   = 20 + int(60 * (idx + 1) / total)
 
-                # Agent 3: Convert to CSV
-                status_text.markdown("🤖 **NEURAL AGENT 03**: Converting to portable data format...")
-                progress_bar.progress(80)
-                with st.spinner("Executing format conversion protocol..."):
-                    csv_data = st.session_state.generator.markdown_to_csv(markdown_table)
-                progress_bar.progress(100)
+                    status.markdown(
+                        f'<p class="agent-label">🤖 AGENT 02 — Generating table {idx+1}/{total}: <strong>{tname}</strong>…</p>',
+                        unsafe_allow_html=True,
+                    )
+                    prog.progress(pct_start)
 
-                status_text.markdown("✅ **DATA SYNTHESIS COMPLETE**")
+                    with st.spinner(f"Fabricating {tname}…"):
+                        df = gen.generate_table_data(tbl, num_rows, parent_ids if tbl.get("foreign_keys") else None)
+                    generated[tname] = df
 
-                st.session_state.csv_data = csv_data
-                st.session_state.attributes = attributes
+                    # Register this table's PK values for child FK constraints
+                    pk = tbl.get("primary_key")
+                    if pk and pk in df.columns:
+                        parent_ids[f"{tname}.{pk}"] = df[pk].tolist()
 
-                st.markdown('<div style="color: #00ff88;">⚡ Synthetic data matrix successfully generated!</div>', unsafe_allow_html=True)
+                    prog.progress(pct_end)
+
+                # ── Agent 3 ── validate & repair ───────────────────────────────
+                status.markdown('<p class="agent-label">🤖 AGENT 03 — Validating referential integrity…</p>', unsafe_allow_html=True)
+                prog.progress(85)
+                with st.spinner("Running integrity checks…"):
+                    generated = gen.validate_and_repair(generated, schema)
+
+                st.session_state.tables = generated
+                prog.progress(100)
+                status.markdown('<p class="status-ok">✅ DATA SYNTHESIS COMPLETE</p>', unsafe_allow_html=True)
+                st.markdown('<p class="status-ok">⚡ All tables generated and verified.</p>', unsafe_allow_html=True)
 
             except Exception as e:
-                st.markdown(f'<div style="color: #ff4444;">❌ SYNTHESIS ERROR: {str(e)}</div>', unsafe_allow_html=True)
-                progress_bar.empty()
-                status_text.empty()
+                st.markdown(f'<p class="status-err">❌ SYNTHESIS ERROR: {e}</p>', unsafe_allow_html=True)
+                prog.empty()
+                status.empty()
 
-    with col2:
-        st.markdown("## SYNTHESIS METRICS")
+        # ── Table preview tabs ─────────────────────────────────────────────────
+        if st.session_state.tables:
+            st.markdown("## 📊 GENERATED DATA MATRICES")
+            tab_names = list(st.session_state.tables.keys())
+            tabs = st.tabs([f"📋 {n}" for n in tab_names])
+            for tab, name in zip(tabs, tab_names):
+                with tab:
+                    df = st.session_state.tables[name]
+                    st.dataframe(df, use_container_width=True, height=300)
 
-        if hasattr(st.session_state, 'attributes'):
-            attrs = st.session_state.attributes
-            st.metric("Data Columns", len(attrs.get('attributes', {})))
-            st.metric("Data Rows", attrs.get('num_rows', 0))
+            # Relationship summary
+            if st.session_state.schema:
+                rel_lines = []
+                for tbl in st.session_state.schema["tables"]:
+                    for fk in tbl.get("foreign_keys", []):
+                        rel_lines.append(
+                            f'<span class="rel-badge">{tbl["name"]}.{fk["column"]} → {fk["references_table"]}.{fk["references_column"]}</span>'
+                        )
+                if rel_lines:
+                    st.markdown("**🔗 Active Relationships:**", unsafe_allow_html=False)
+                    st.markdown(" ".join(rel_lines), unsafe_allow_html=True)
 
-        if hasattr(st.session_state, 'csv_data'):
-            st.markdown("## 💾 DATA EXTRACTION")
+    # ── Right panel — metrics + download ──────────────────────────────────────
+    with right:
+        st.markdown("## 📈 SYNTHESIS METRICS")
+
+        if st.session_state.schema and st.session_state.tables:
+            schema  = st.session_state.schema
+            tables  = st.session_state.tables
+
+            st.metric("Tables Generated", len(tables))
+            total_cols = sum(len(df.columns) for df in tables.values())
+            st.metric("Total Columns",    total_cols)
+            total_rows = sum(len(df) for df in tables.values())
+            st.metric("Total Rows",       total_rows)
+
+            st.markdown("---")
+            st.markdown("### TABLE BREAKDOWN")
+            for name, df in tables.items():
+                st.markdown(
+                    f'<div class="panel"><span style="color:#00d4ff;font-size:0.75rem;">'
+                    f'▸ {name}</span><br/>'
+                    f'<span style="color:#4080b0;font-size:0.7rem;">{len(df.columns)} cols &nbsp;·&nbsp; {len(df)} rows</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("---")
+        st.markdown("## 💾 DATA EXTRACTION")
+
+        if st.session_state.tables and st.session_state.schema:
+            # Excel multi-sheet
+            with st.spinner("Building Excel workbook…"):
+                excel_bytes = gen.build_excel(st.session_state.tables, st.session_state.schema)
 
             st.download_button(
-                label="📥 EXTRACT CSV MATRIX",
-                data=st.session_state.csv_data,
-                file_name="fauxfoundry_dataset.csv",
-                mime="text/csv",
-                use_container_width=True
+                label="📥 DOWNLOAD EXCEL (.xlsx)",
+                data=excel_bytes,
+                file_name="fauxfoundry_dataset.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
             )
 
+            # Individual CSV per table
+            st.markdown("**Per-table CSV downloads:**")
+            for name, df in st.session_state.tables.items():
+                csv_bytes = df.to_csv(index=False).encode()
+                st.download_button(
+                    label=f"📥 {name}.csv",
+                    data=csv_bytes,
+                    file_name=f"fauxfoundry_{name.lower()}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"csv_{name}",
+                )
+
+            # Schema JSON
             st.download_button(
-                label="📥 EXTRACT SCHEMA MAP",
-                data=json.dumps(st.session_state.attributes, indent=2),
+                label="📥 SCHEMA JSON",
+                data=json.dumps(st.session_state.schema, indent=2),
                 file_name="fauxfoundry_schema.json",
                 mime="application/json",
-                use_container_width=True
+                use_container_width=True,
             )
         else:
-            st.info("🔄 Initiate data synthesis to view metrics and extraction options.")
+            st.info("🔄 Run synthesis to unlock downloads.")
 
-    # Footer
+    # ── Footer ─────────────────────────────────────────────────────────────────
     st.markdown("""
-<hr style="margin-top: 3rem; opacity: 0.3;"/>
-<div style="text-align:center; opacity: 0.5; padding: 1rem;">
-  FAUXFOUNDRY | Synthetic Test Data Generator<br>
-  Powered by GPT-4o-mini | Built with Streamlit<br>
-  ⚡ Synthetic Intelligence Laboratory ⚡
-</div>
-""", unsafe_allow_html=True)
+    <hr style="margin-top:3rem;opacity:0.15;"/>
+    <div style="text-align:center;opacity:0.4;padding:1rem;font-size:0.7rem;letter-spacing:0.15em;">
+      FAUXFOUNDRY V2.0 &nbsp;·&nbsp; RELATIONAL SYNTHETIC DATA ENGINE<br/>
+      POWERED BY GPT-4o-mini &nbsp;·&nbsp; BUILT WITH STREAMLIT<br/>
+      ⚡ SYNTHETIC INTELLIGENCE LABORATORY ⚡
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
     main()
-
-
-# import streamlit as st
-# import json
-# import csv
-# import io
-# import pandas as pd
-# import google.generativeai as genai
-# from openai import OpenAI
-# import re
-# from typing import Dict, Any
-# import time
-
-# # Configure page
-# st.set_page_config(
-#     page_title="FauxFoundry",
-#     page_icon="⚡",
-#     layout="wide",
-#     initial_sidebar_state="expanded"
-# )
-
-# # Sci-Fi Dark Theme CSS
-# st.markdown("""
-# <style>
-#     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;500;600&display=swap');
-    
-#     /* Global Dark Theme */
-#     .stApp {
-#         background: #0a0a0a;
-#         color: #e0e0e0;
-#     }
-    
-#     .main > div {
-#         background: #0a0a0a;
-#     }
-    
-#     /* Custom Scrollbar */
-#     ::-webkit-scrollbar {
-#         width: 8px;
-#     }
-    
-#     ::-webkit-scrollbar-track {
-#         background: #1a1a1a;
-#     }
-    
-#     ::-webkit-scrollbar-thumb {
-#         background: linear-gradient(45deg, #00f5ff, #0080ff);
-#         border-radius: 10px;
-#     }
-    
-#     /* Main Header */
-#     .main-header {
-#         text-align: center;
-#         padding: 3rem 0;
-#         background: linear-gradient(135deg, #000000 0%, #1a1a1a 50%, #000000 100%);
-#         border: 2px solid transparent;
-#         border-image: linear-gradient(45deg, #00f5ff, #0080ff, #8000ff) 1;
-#         color: white;
-#         border-radius: 15px;
-#         margin-bottom: 2rem;
-#         position: relative;
-#         overflow: hidden;
-#     }
-    
-#     .main-header::before {
-#         content: '';
-#         position: absolute;
-#         top: 0;
-#         left: -100%;
-#         width: 100%;
-#         height: 100%;
-#         background: linear-gradient(90deg, transparent, rgba(0, 245, 255, 0.1), transparent);
-#         animation: shimmer 3s infinite;
-#     }
-    
-#     @keyframes shimmer {
-#         0% { left: -100%; }
-#         100% { left: 100%; }
-#     }
-    
-#     .main-header h1 {
-#         font-family: 'Orbitron', monospace;
-#         font-size: 3.5rem;
-#         font-weight: 900;
-#         background: linear-gradient(45deg, #00f5ff, #ffffff, #8000ff);
-#         -webkit-background-clip: text;
-#         -webkit-text-fill-color: transparent;
-#         background-clip: text;
-#         text-shadow: 0 0 30px rgba(0, 245, 255, 0.5);
-#         margin-bottom: 0.5rem;
-#         letter-spacing: 4px;
-#     }
-    
-#     .main-header p {
-#         font-family: 'Exo 2', sans-serif;
-#         font-size: 1.2rem;
-#         color: #00f5ff;
-#         text-transform: uppercase;
-#         letter-spacing: 2px;
-#         opacity: 0.9;
-#     }
-    
-#     /* Agent Cards */
-#     .agent-card {
-#         background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-#         padding: 2rem;
-#         border-radius: 15px;
-#         border: 1px solid #333;
-#         border-left: 4px solid #00f5ff;
-#         margin: 1.5rem 0;
-#         box-shadow: 
-#             0 4px 8px rgba(0, 0, 0, 0.3),
-#             0 0 20px rgba(0, 245, 255, 0.1);
-#         position: relative;
-#         overflow: hidden;
-#     }
-    
-#     .agent-card::before {
-#         content: '';
-#         position: absolute;
-#         top: 0;
-#         left: 0;
-#         right: 0;
-#         height: 2px;
-#         background: linear-gradient(90deg, #00f5ff, #8000ff, #00f5ff);
-#         animation: pulse-border 2s ease-in-out infinite;
-#     }
-    
-#     @keyframes pulse-border {
-#         0%, 100% { opacity: 0.5; }
-#         50% { opacity: 1; }
-#     }
-    
-#     /* Success/Error Messages */
-#     .success-message {
-#         background: linear-gradient(135deg, #0d4f3c 0%, #1a5f4a 100%);
-#         color: #00ff88;
-#         padding: 1.2rem;
-#         border-radius: 10px;
-#         border: 1px solid #00ff88;
-#         margin: 1rem 0;
-#         font-family: 'Exo 2', sans-serif;
-#         box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
-#     }
-    
-#     .error-message {
-#         background: linear-gradient(135deg, #4a1a1a 0%, #5a2a2a 100%);
-#         color: #ff4444;
-#         padding: 1.2rem;
-#         border-radius: 10px;
-#         border: 1px solid #ff4444;
-#         margin: 1rem 0;
-#         font-family: 'Exo 2', sans-serif;
-#         box-shadow: 0 0 15px rgba(255, 68, 68, 0.2);
-#     }
-    
-#     /* Buttons */
-#     .stButton > button {
-#         background: linear-gradient(45deg, #00f5ff, #0080ff);
-#         color: #000;
-#         border: none;
-#         border-radius: 10px;
-#         padding: 0.8rem 2.5rem;
-#         font-weight: 600;
-#         font-family: 'Exo 2', sans-serif;
-#         text-transform: uppercase;
-#         letter-spacing: 1px;
-#         transition: all 0.3s ease;
-#         box-shadow: 0 4px 15px rgba(0, 245, 255, 0.3);
-#     }
-    
-#     .stButton > button:hover {
-#         transform: translateY(-3px);
-#         box-shadow: 0 6px 25px rgba(0, 245, 255, 0.5);
-#         background: linear-gradient(45deg, #0080ff, #8000ff);
-#         color: white;
-#     }
-    
-#     .stButton > button:disabled {
-#         background: #333;
-#         color: #666;
-#         box-shadow: none;
-#         transform: none;
-#     }
-    
-#     /* Metric Cards */
-#     .metric-card {
-#         background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-#         padding: 1.5rem;
-#         border-radius: 12px;
-#         border: 1px solid #333;
-#         text-align: center;
-#         margin: 1rem 0;
-#         box-shadow: 
-#             0 4px 8px rgba(0, 0, 0, 0.3),
-#             0 0 15px rgba(0, 245, 255, 0.1);
-#     }
-    
-#     .metric-card h3 {
-#         color: #00f5ff;
-#         font-family: 'Orbitron', monospace;
-#         margin-bottom: 0.5rem;
-#     }
-    
-#     /* Sidebar Styling */
-#     .css-1d391kg {
-#         background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 100%);
-#     }
-    
-#     .css-1v0mbdj {
-#         border-right: 2px solid #333;
-#     }
-    
-#     /* Input Fields */
-#     .stTextInput > div > div > input,
-#     .stTextArea > div > div > textarea {
-#         background: #1a1a1a;
-#         color: #e0e0e0;
-#         border: 1px solid #333;
-#         border-radius: 8px;
-#         font-family: 'Exo 2', sans-serif;
-#     }
-    
-#     .stTextInput > div > div > input:focus,
-#     .stTextArea > div > div > textarea:focus {
-#         border-color: #00f5ff;
-#         box-shadow: 0 0 10px rgba(0, 245, 255, 0.3);
-#     }
-    
-#     /* Progress Bar */
-#     .stProgress > div > div > div {
-#         background: linear-gradient(90deg, #00f5ff, #0080ff, #8000ff);
-#     }
-    
-#     /* Headers */
-#     h1, h2, h3 {
-#         font-family: 'Orbitron', monospace;
-#         color: #00f5ff;
-#     }
-    
-#     h2 {
-#         border-bottom: 2px solid #333;
-#         padding-bottom: 0.5rem;
-#         margin-bottom: 1.5rem;
-#     }
-    
-#     /* JSON Display */
-#     .stJson {
-#         background: #1a1a1a;
-#         border: 1px solid #333;
-#         border-radius: 8px;
-#     }
-    
-#     /* Status Indicators */
-#     .status-ready {
-#         color: #00ff88;
-#         background: #0d4f3c;
-#         padding: 0.5rem 1rem;
-#         border-radius: 20px;
-#         font-family: 'Exo 2', sans-serif;
-#         text-transform: uppercase;
-#         font-size: 0.8rem;
-#         letter-spacing: 1px;
-#         box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
-#     }
-    
-#     .status-warning {
-#         color: #ffaa00;
-#         background: #4a3d0d;
-#         padding: 0.5rem 1rem;
-#         border-radius: 20px;
-#         font-family: 'Exo 2', sans-serif;
-#         text-transform: uppercase;
-#         font-size: 0.8rem;
-#         letter-spacing: 1px;
-#         box-shadow: 0 0 10px rgba(255, 170, 0, 0.3);
-#     }
-    
-#     /* Footer */
-#     .footer {
-#         background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
-#         border-top: 2px solid #333;
-#         text-align: center;
-#         color: #666;
-#         padding: 2rem 0;
-#         margin-top: 3rem;
-#         font-family: 'Exo 2', sans-serif;
-#     }
-    
-#     .footer p {
-#         margin: 0.5rem 0;
-#     }
-    
-#     .footer .brand {
-#         color: #00f5ff;
-#         font-family: 'Orbitron', monospace;
-#         font-weight: bold;
-#     }
-    
-#     /* Animation for loading states */
-#     @keyframes glow {
-#         0%, 100% { box-shadow: 0 0 5px rgba(0, 245, 255, 0.5); }
-#         50% { box-shadow: 0 0 20px rgba(0, 245, 255, 0.8); }
-#     }
-    
-#     .loading-glow {
-#         animation: glow 2s ease-in-out infinite;
-#     }
-    
-#     /* Data Table Styling */
-#     .stDataFrame {
-#         background: #1a1a1a;
-#         border: 1px solid #333;
-#         border-radius: 8px;
-#     }
-    
-#     /* Download Section */
-#     .download-section {
-#         background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-#         padding: 1.5rem;
-#         border-radius: 12px;
-#         border: 1px solid #333;
-#         margin: 1rem 0;
-#         box-shadow: 0 0 15px rgba(0, 245, 255, 0.1);
-#     }
-# </style>
-# """, unsafe_allow_html=True)
-
-# class SyntheticDataGenerator:
-#     def __init__(self):
-#         self.gemini_client = None
-#         self.openai_client = None
-        
-#     def setup_gemini(self, api_key: str):
-#         """Setup Google Gemini client"""
-#         try:
-#             genai.configure(api_key=api_key)
-#             self.gemini_client = genai.GenerativeModel('gemini-1.5-flash')
-#             return True
-#         except Exception as e:
-#             st.error(f"Failed to setup Gemini: {str(e)}")
-#             return False
-    
-#     def setup_openai(self, api_key: str):
-#         """Setup OpenAI client"""
-#         try:
-#             self.openai_client = OpenAI(api_key=api_key)
-#             return True
-#         except Exception as e:
-#             st.error(f"Failed to setup OpenAI: {str(e)}")
-#             return False
-    
-#     def generate_attributes(self, user_prompt: str) -> Dict[str, Any]:
-#         """Agent 1: Generate attributes using Google Gemini"""
-#         if not self.gemini_client:
-#             raise Exception("Gemini client not configured")
-        
-#         prompt = f"""
-#         Based on the following user request, create a JSON schema that defines the data attributes and their types.
-        
-#         User Request: {user_prompt}
-        
-#         Please analyze the request and create a JSON object with the following structure:
-#         {{
-#             "attributes": {{
-#                 "column_name": "data_type",
-#                 ...
-#             }},
-#             "num_rows": number_of_rows_requested,
-#             "dataset_description": "brief description of the dataset"
-#         }}
-        
-#         Supported data types: string, integer, float, boolean, date, email, phone, address, url
-        
-#         Return ONLY the JSON object, no additional text or explanation.
-#         """
-        
-#         try:
-#             response = self.gemini_client.generate_content(prompt)
-            
-#             # Extract JSON from response
-#             json_text = response.text.strip()
-            
-#             # Clean up the response to extract JSON
-#             if "```json" in json_text:
-#                 json_text = json_text.split("```json")[1].split("```")[0]
-#             elif "```" in json_text:
-#                 json_text = json_text.split("```")[1]
-            
-#             # Parse JSON
-#             attributes = json.loads(json_text.strip())
-#             return attributes
-            
-#         except Exception as e:
-#             raise Exception(f"Error generating attributes: {str(e)}")
-    
-#     def generate_dataset(self, attributes: Dict[str, Any]) -> str:
-#         """Agent 2: Generate dataset using OpenAI GPT-4o-mini"""
-#         if not self.openai_client:
-#             raise Exception("OpenAI client not configured")
-        
-#         attr_dict = attributes.get("attributes", {})
-#         num_rows = attributes.get("num_rows", 10)
-#         description = attributes.get("dataset_description", "")
-        
-#         # Create column headers
-#         columns = list(attr_dict.keys())
-        
-#         prompt = f"""
-#         Generate a realistic synthetic dataset with the following specifications:
-        
-#         Dataset Description: {description}
-#         Number of rows: {num_rows}
-        
-#         Columns and their types:
-#         {json.dumps(attr_dict, indent=2)}
-        
-#         Requirements:
-#         1. Generate realistic, diverse data that makes sense for each column type
-#         2. Ensure data consistency and logical relationships between columns
-#         3. Return the data in markdown table format
-#         4. Include proper headers
-#         5. Make sure all data is appropriate and follows the specified data types
-        
-#         Return ONLY the markdown table, no additional text or explanation.
-#         """
-        
-#         try:
-#             response = self.openai_client.chat.completions.create(
-#                 model="gpt-4o-mini",
-#                 messages=[
-#                     {"role": "system", "content": "You are a synthetic data generator. Generate realistic, diverse datasets in markdown table format."},
-#                     {"role": "user", "content": prompt}
-#                 ],
-#                 temperature=0.7,
-#                 max_tokens=2000
-#             )
-            
-#             return response.choices[0].message.content
-            
-#         except Exception as e:
-#             raise Exception(f"Error generating dataset: {str(e)}")
-    
-#     def markdown_to_csv(self, markdown_table: str) -> str:
-#         """Agent 3: Convert markdown table to CSV"""
-#         try:
-#             lines = markdown_table.strip().split('\n')
-            
-#             # Find the table start
-#             table_lines = []
-#             in_table = False
-            
-#             for line in lines:
-#                 if '|' in line and not in_table:
-#                     in_table = True
-#                     table_lines.append(line)
-#                 elif '|' in line and in_table:
-#                     table_lines.append(line)
-#                 elif in_table and '|' not in line:
-#                     break
-            
-#             if not table_lines:
-#                 raise Exception("No table found in markdown")
-            
-#             # Process table lines
-#             csv_lines = []
-#             for i, line in enumerate(table_lines):
-#                 # Skip separator lines (contains only |, -, :, and spaces)
-#                 if re.match(r'^[\|\-\:\s]+$', line):
-#                     continue
-                
-#                 # Clean and split the line
-#                 cells = [cell.strip() for cell in line.split('|')]
-#                 # Remove empty cells at start/end
-#                 cells = [cell for cell in cells if cell]
-                
-#                 if cells:
-#                     csv_lines.append(','.join(f'"{cell}"' for cell in cells))
-            
-#             return '\n'.join(csv_lines)
-            
-#         except Exception as e:
-#             raise Exception(f"Error converting to CSV: {str(e)}")
-
-# def main():
-#     # Header
-#     st.markdown("""
-#     <div class="main-header">
-#         <h1>FAUXFOUNDRY</h1>
-#         <p>Synthetic Test Data Generator</p>
-#     </div>
-#     """, unsafe_allow_html=True)
-    
-#     # Initialize generator
-#     if 'generator' not in st.session_state:
-#         st.session_state.generator = SyntheticDataGenerator()
-    
-#     # Sidebar for API keys
-#     with st.sidebar:
-#         st.markdown("## ⚡ NEURAL INTERFACE")
-        
-#         # Gemini API Key
-#         gemini_key = st.text_input(
-#             "🔮 Gemini Neural Link",
-#             type="password",
-#             help="Initialize Gemini consciousness"
-#         )
-        
-#         # OpenAI API Key  
-#         openai_key = st.text_input(
-#             "🧠 OpenAI Neural Core",
-#             type="password",
-#             help="Activate GPT neural matrix"
-#         )
-        
-#         # Setup clients
-#         if gemini_key and openai_key:
-#             if st.button("🔧 INITIALIZE NEURAL NETWORK"):
-#                 with st.spinner("Synchronizing neural pathways..."):
-#                     gemini_success = st.session_state.generator.setup_gemini(gemini_key)
-#                     openai_success = st.session_state.generator.setup_openai(openai_key)
-                    
-#                     if gemini_success and openai_success:
-#                         st.markdown('<div class="success-message">⚡ Neural network synchronized!</div>', unsafe_allow_html=True)
-#                         st.session_state.apis_configured = True
-#                     else:
-#                         st.markdown('<div class="error-message">❌ Neural sync failed</div>', unsafe_allow_html=True)
-#                         st.session_state.apis_configured = False
-        
-#         # Status indicator
-#         if hasattr(st.session_state, 'apis_configured') and st.session_state.apis_configured:
-#             st.markdown('<div class="status-ready">🟢 NEURAL LINK ACTIVE</div>', unsafe_allow_html=True)
-#         else:
-#             st.markdown('<div class="status-warning">🟡 NEURAL LINK OFFLINE</div>', unsafe_allow_html=True)
-    
-#     # Main content
-#     col1, col2 = st.columns([2, 1])
-    
-#     with col1:
-#         st.markdown("## DATA SYNTHESIS REQUEST")
-        
-#         # User input
-#         user_prompt = st.text_area(
-#             "Transmit your data requirements:",
-#             placeholder="EXAMPLE TRANSMISSION: Create me a dataset about space colony inhabitants with columns: name, sector, ID number, age, and occupation. I want 20 rows of synthetic data.",
-#             height=150
-#         )
-        
-#         # Generate button
-#         if st.button(" INITIATE DATA SYNTHESIS", disabled=not hasattr(st.session_state, 'apis_configured') or not st.session_state.apis_configured):
-#             if not user_prompt:
-#                 st.markdown('<div class="error-message">❌ No transmission received. Please provide synthesis parameters.</div>', unsafe_allow_html=True)
-#                 return
-            
-#             # Progress tracking
-#             progress_bar = st.progress(0)
-#             status_text = st.empty()
-            
-#             try:
-#                 # Agent 1: Generate Attributes
-#                 status_text.markdown(" **NEURAL AGENT 01**: Analyzing transmission and parsing data schema...")
-#                 progress_bar.progress(10)
-                
-#                 with st.spinner("Executing schema analysis protocol..."):
-#                     attributes = st.session_state.generator.generate_attributes(user_prompt)
-                
-#                 progress_bar.progress(33)
-                
-#                 # Display attributes
-#                 st.markdown('<div class="agent-card">', unsafe_allow_html=True)
-#                 st.markdown("### 🎯 AGENT 01 OUTPUT - Schema Matrix")
-#                 st.json(attributes)
-#                 st.markdown('</div>', unsafe_allow_html=True)
-                
-#                 # Agent 2: Generate Dataset
-#                 status_text.markdown("🤖 **NEURAL AGENT 02**: Fabricating synthetic data matrix...")
-#                 progress_bar.progress(50)
-                
-#                 with st.spinner("Running data synthesis algorithms..."):
-#                     markdown_table = st.session_state.generator.generate_dataset(attributes)
-                
-#                 progress_bar.progress(66)
-                
-#                 # Display dataset
-#                 st.markdown('<div class="agent-card">', unsafe_allow_html=True)
-#                 st.markdown("### 📊 AGENT 02 OUTPUT - Synthetic Data Matrix")
-#                 st.markdown(markdown_table)
-#                 st.markdown('</div>', unsafe_allow_html=True)
-                
-#                 # Agent 3: Convert to CSV
-#                 status_text.markdown("🤖 **NEURAL AGENT 03**: Converting to portable data format...")
-#                 progress_bar.progress(80)
-                
-#                 with st.spinner("Executing format conversion protocol..."):
-#                     csv_data = st.session_state.generator.markdown_to_csv(markdown_table)
-                
-#                 progress_bar.progress(100)
-#                 status_text.markdown("✅ **DATA SYNTHESIS COMPLETE**")
-                
-#                 # Store results
-#                 st.session_state.csv_data = csv_data
-#                 st.session_state.attributes = attributes
-                
-#                 # Success message
-#                 st.markdown('<div class="success-message">⚡ Synthetic data matrix successfully generated!</div>', unsafe_allow_html=True)
-                
-#             except Exception as e:
-#                 st.markdown(f'<div class="error-message">❌ SYNTHESIS ERROR: {str(e)}</div>', unsafe_allow_html=True)
-#                 progress_bar.empty()
-#                 status_text.empty()
-    
-#     with col2:
-#         st.markdown("## SYNTHESIS METRICS")
-        
-#         if hasattr(st.session_state, 'attributes'):
-#             attrs = st.session_state.attributes
-            
-#             # Metrics
-#             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-#             st.metric("Data Columns", len(attrs.get('attributes', {})))
-#             st.markdown('</div>', unsafe_allow_html=True)
-            
-#             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-#             st.metric("Data Rows", attrs.get('num_rows', 0))
-#             st.markdown('</div>', unsafe_allow_html=True)
-            
-#             # Download section
-#             if hasattr(st.session_state, 'csv_data'):
-#                 st.markdown("## 💾 DATA EXTRACTION")
-                
-#                 st.markdown('<div class="download-section">', unsafe_allow_html=True)
-                
-#                 # CSV download
-#                 st.download_button(
-#                     label="📥 EXTRACT CSV MATRIX",
-#                     data=st.session_state.csv_data,
-#                     file_name="fauxfoundry_dataset.csv",
-#                     mime="text/csv",
-#                     use_container_width=True
-#                 )
-                
-#                 # JSON schema download
-#                 st.download_button(
-#                     label="📥 EXTRACT SCHEMA MAP",
-#                     data=json.dumps(st.session_state.attributes, indent=2),
-#                     file_name="fauxfoundry_schema.json",
-#                     mime="application/json",
-#                     use_container_width=True
-#                 )
-                
-#                 st.markdown('</div>', unsafe_allow_html=True)
-#         else:
-#             st.info("🔄 Initiate data synthesis to view metrics and extraction options.")
-    
-#     # Footer
-#     st.markdown("""
-#     <div class="footer">
-#         <p><span class="brand">FAUXFOUNDRY</span> | Synthetic Test Data Generator</p>
-#         <p>Powered by Gemini & GPT-4o Matrix | Built with Streamlit</p>
-#         <p>⚡ Synthetic Intelligence Laboratory ⚡</p>
-#     </div>
-#     """, unsafe_allow_html=True)
-
-# if __name__ == "__main__":
-#     main()
